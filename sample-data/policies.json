@@ -1,0 +1,50 @@
+[
+  {
+    "id": "POL-RETRY",
+    "title": "Retry policy",
+    "text": "Temporary processing errors may be retried once when the account is active. Retries above the auto-retry limit require human approval.",
+    "keywords": ["temporary_error", "retry", "active", "auto-retry"]
+  },
+  {
+    "id": "POL-FUNDS",
+    "title": "Insufficient funds",
+    "text": "Insufficient funds: hold the payment and notify the customer; do not retry automatically.",
+    "keywords": ["insufficient_funds", "hold", "funds"]
+  },
+  {
+    "id": "POL-CLOSED",
+    "title": "Closed account",
+    "text": "Closed accounts: escalate to the account team; do not retry.",
+    "keywords": ["account_closed", "closed", "escalate"]
+  },
+  {
+    "id": "POL-LIMIT",
+    "title": "Limit exceeded",
+    "text": "Limit exceeded: escalate for limit review; do not retry.",
+    "keywords": ["limit_exceeded", "limit", "escalate"]
+  },
+  {
+    "id": "POL-REFUND",
+    "title": "Refund policy",
+    "text": "Refunds apply only to settled payments, must not exceed the original amount or the refund cap, and require human approval.",
+    "keywords": ["refund", "settled", "approval", "cap"]
+  },
+  {
+    "id": "POL-DUP",
+    "title": "Duplicate payments",
+    "text": "Duplicate payments: request a refund for the duplicate amount; require human approval.",
+    "keywords": ["duplicate", "refund", "approval"]
+  },
+  {
+    "id": "POL-DISPUTE",
+    "title": "Customer disputes",
+    "text": "Customer disputes: request a refund when the amount is within the cap; otherwise escalate.",
+    "keywords": ["dispute", "refund", "cap", "escalate"]
+  },
+  {
+    "id": "POL-ABSTAIN",
+    "title": "Insufficient evidence",
+    "text": "If evidence is missing or conflicting, escalate to a human; do not guess.",
+    "keywords": ["missing", "conflicting", "escalate", "evidence"]
+  }
+]

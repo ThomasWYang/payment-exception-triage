@@ -1,0 +1,6 @@
+[
+  {"id": "ACC-2001", "status": "ACTIVE"},
+  {"id": "ACC-2002", "status": "ACTIVE"},
+  {"id": "ACC-2003", "status": "CLOSED"},
+  {"id": "ACC-2004", "status": "BLOCKED"}
+]

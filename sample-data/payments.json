@@ -1,0 +1,83 @@
+[
+  {
+    "id": "PAY-1000",
+    "amount_cents": 150000,
+    "currency": "AUD",
+    "status": "SETTLED",
+    "failure_code": null,
+    "duplicate_of": null,
+    "account_id": "ACC-2002"
+  },
+  {
+    "id": "PAY-1001",
+    "amount_cents": 25000,
+    "currency": "AUD",
+    "status": "FAILED",
+    "failure_code": "TEMPORARY_ERROR",
+    "duplicate_of": null,
+    "account_id": "ACC-2001"
+  },
+  {
+    "id": "PAY-1002",
+    "amount_cents": 500000,
+    "currency": "AUD",
+    "status": "FAILED",
+    "failure_code": "TEMPORARY_ERROR",
+    "duplicate_of": null,
+    "account_id": "ACC-2002"
+  },
+  {
+    "id": "PAY-1003",
+    "amount_cents": 120000,
+    "currency": "AUD",
+    "status": "FAILED",
+    "failure_code": "INSUFFICIENT_FUNDS",
+    "duplicate_of": null,
+    "account_id": "ACC-2001"
+  },
+  {
+    "id": "PAY-1004",
+    "amount_cents": 90000,
+    "currency": "AUD",
+    "status": "FAILED",
+    "failure_code": "ACCOUNT_CLOSED",
+    "duplicate_of": null,
+    "account_id": "ACC-2003"
+  },
+  {
+    "id": "PAY-1005",
+    "amount_cents": 300000,
+    "currency": "AUD",
+    "status": "FAILED",
+    "failure_code": "LIMIT_EXCEEDED",
+    "duplicate_of": null,
+    "account_id": "ACC-2001"
+  },
+  {
+    "id": "PAY-1006",
+    "amount_cents": 150000,
+    "currency": "AUD",
+    "status": "SETTLED",
+    "failure_code": null,
+    "duplicate_of": "PAY-1000",
+    "account_id": "ACC-2002"
+  },
+  {
+    "id": "PAY-1007",
+    "amount_cents": 250000,
+    "currency": "AUD",
+    "status": "SETTLED",
+    "failure_code": null,
+    "duplicate_of": null,
+    "account_id": "ACC-2001"
+  },
+  {
+    "id": "PAY-1008",
+    "amount_cents": 2000000,
+    "currency": "AUD",
+    "status": "SETTLED",
+    "failure_code": null,
+    "duplicate_of": null,
+    "account_id": "ACC-2002"
+  }
+]
