@@ -10,7 +10,8 @@ Claude Code (Anthropic) as the primary AI coding agent.
 2. **Option comparison**: compare the initial proposal with two GPT-generated lists, deduplicate and rank; keep only projects that meet every requirement and are showcase-friendly.
 3. **Plan review**: audit the plan against the brief twice; fix gaps before writing code.
 4. **Implementation**: phased build with a commit per phase; subagents for tests, documentation and checklist auditing.
-5. **Verification**: tests, golden-case eval, fresh-clone check, manual red-team.
+5. **Verification**: tests, golden-case eval, fresh-clone check, mutation check and a full code review.
+6. **Code-review hardening**: triage the review findings, fix the valid ones with regression tests, and update the evidence.
 
 ## Representative steering prompts
 
@@ -19,11 +20,13 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - "Use subagents for tests, checklists and docs; keep progressive commits."
 - "Majority backend, keep the UI thin."
 - "If you can finish earlier and meet all requirements, you can create a simple UI with React/Angular separate from the backend API."
+- "Use the code-review skill to review all code if you haven't done so."
+- "Address all valid findings when the code-review agent comes back and update docs if necessary."
 
 ## Where I intervened
 
 - Rejected Docker for the 3-hour slice; documented the container/cloud path instead.
-- Corrected the refund path: a failed payment cannot produce a legitimate refund; added duplicate-payment and customer-dispute exception types.
+- Corrected the refund path: a failed payment cannot produce a legitimate refund; added duplicate-payment and customer-dispute cases.
 - Replaced loose 90/95% eval thresholds with exact expected-outcome gates for a deterministic planner.
 - Added payment-mismatch and action/exception compatibility guards.
 - Added tool-call/time limits and fail-closed degradation.
@@ -36,18 +39,36 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - Upgraded the UI toolchain to Vite 8.3 / plugin-react 6.3 after `npm audit` flagged dev-only esbuild issues; rebuild and audit are clean.
 - Added CORS and static serving for the separate React client; the API remains the security boundary.
 
+## Code review and hardening
+
+The code-review skill reviewed the full repository and returned **27 findings: 12 important, 15 nit**. I triaged each one and fixed the valid findings, adding regression tests:
+
+- **Agent boundaries**: the gateway no longer exposes the repository publicly; tool attempts (including invalid/unknown calls) count toward the budget; args are revalidated against the tool schema; the planner runs under a real deadline.
+- **Authorization**: the server sets the case assignee to the creator; clients cannot choose it. This closes a separation-of-duties bypass.
+- **Policy**: degraded mode gates holds as well as retries/refunds; refunds require an active account; policy documents are validated at startup and mid-flight failures escalate.
+- **Workflow reliability**: concurrent same-key approvals replay the stored result; invalid planner drafts escalate instead of returning 500; the approval rationale is redacted and truncated to the field limit; the executor receives the proposal ID as a durable idempotency key and its output is length-bounded.
+- **Audit**: `recursive_triggers` blocks INSERT OR REPLACE as well as UPDATE/DELETE.
+- **API/ops**: chunked requests are rejected; CORS is outermost and covers 413/500; `/readyz` probes the schema without creating a database; case reads use a read transaction; tool calls and failed request completions are logged.
+- **UI**: one idempotency key per pending approval; approval actions are gated to approver roles.
+- **Hygiene**: `env.example` documents all settings; type annotations were completed.
+
+Deliberate dispositions (documented, not changed):
+
+- Idempotency keys are globally scoped per deployment; clients should use UUIDs.
+- Execution is at-least-once at the workflow boundary; the executor must dedupe on the proposal ID. Production would use an outbox for exactly-once semantics.
+- The UI has no browser automation; it is checked by a TypeScript/Vite build and a server-side smoke test, and the API endpoints it calls are covered by API tests.
+
 ## How generated output is reviewed
 
 - Every phase ends with a diff review and a commit.
 - Tests are the oracle: a policy rule is not considered implemented until a failing test exists and passes.
 - The golden-case eval gates regressions with exact expected outcomes and zero forbidden executions.
+- Every code commit from the original build was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 121 after the UI/CORS and code-review hardening. All passed.
 - A mutation check breaks a rule in a temporary copy and confirms tests fail.
-- Every code commit was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 100 with the UI/CORS tests. All passed.
-- The React UI is checked by a TypeScript + Vite build and a server-side smoke test; no browser automation.
 - A fresh public clone was verified end-to-end: verify, demo, UI build and UI smoke.
-- Mutation check: disabling the refund-cap rule in a temporary worktree made the policy test and golden eval fail as expected; the submitted history was unchanged.
+- GitHub Actions is green, including the code-review fix commit.
 - Subagents (when used) produce drafts only; I review, run and accept or reject their output.
 
 ## Notes
 
-Representative excerpts only; no raw transcripts. The build interventions above are updated as the work proceeds.
+Representative excerpts only; no raw transcripts.

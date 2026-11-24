@@ -160,11 +160,13 @@ The planner has no execute tool. The only write path is a proposal, and the serv
 
 - **Validation rejection**: invalid payloads, unknown roles, oversized requests and unknown tools are rejected with no side effects.
 - **Guarded failure**: planner/tool errors escalate; executor errors mark the case failed; a database outage fails closed.
-- **Degrade mode**: `DEGRADED_MODE=true` or `AUTO_APPROVE_ENABLED=false` forces human approval for financial actions.
+- **Degrade mode**: `DEGRADED_MODE=true` or `AUTO_APPROVE_ENABLED=false` forces human approval for retries, refunds and holds.
 - **Safe abstain**: missing or conflicting evidence escalates instead of guessing.
-- **Separation of duties**: the approver must be a different person from the case assignee.
+- **Separation of duties**: the server sets the case assignee to the creating analyst; the approver must be a different person.
+- **Refund controls**: refunds require a settled payment and an active account, and are capped at the original amount and the configured cap.
 - **Idempotency**: one execution per proposal; duplicate approvals replay the original result.
-- **Audit integrity**: SQLite triggers reject UPDATE/DELETE on audit events.
+- **Audit integrity**: SQLite triggers reject UPDATE/DELETE, and recursive triggers block INSERT OR REPLACE.
+- **Request size**: requests must carry `Content-Length`; chunked requests are rejected with 411.
 - **PII**: no raw PII in logs or audit; free text is redacted.
 
 ## Optional React UI
@@ -189,6 +191,10 @@ Start the API and open `http://127.0.0.1:8000/ui/`. For UI development, run `npm
 - AUD only; no FX or partial refunds.
 - No Docker or cloud deployment; the production/CI-CD path is documented in `evidence/design.md`.
 - The golden eval is a synthetic regression gate, not a model-quality benchmark.
+- Execution is at-least-once at the workflow boundary. The executor receives the proposal ID as a durable idempotency key and must dedupe; the mock is pure. Production would use an outbox for exactly-once semantics.
+- Idempotency keys are globally scoped per deployment; clients should use UUIDs.
+- The deterministic planner is trusted code. An untrusted or LLM planner should run out of process; the gateway keeps the repository private, but Python attribute access is not a sandbox.
+- Chunked request bodies are rejected with 411; the request-size guard uses Content-Length. Production would enforce the limit at the API gateway/WAF.
 - The UI has a TypeScript/Vite build check and a server-side smoke test, but no browser automation.
 - No rate limiting; production would add it at the gateway.
 - `/status` is public locally; restrict it in production.

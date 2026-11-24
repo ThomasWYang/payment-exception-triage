@@ -14,7 +14,7 @@
 
 **Decision:** Expose only read-only tools to the planner. Execution is a service-side workflow after policy and, where required, human approval.
 
-**Consequences:** The agent cannot move money; the service enforces the boundary. The API and UI show the denials.
+**Consequences:** The agent cannot move money; the service enforces the boundary. The API and UI show the denials. The gateway keeps the repository private; the deterministic planner is trusted code, and an untrusted/LLM planner should run out of process.
 
 ## ADR-3: Tiered approval with separation of duties
 
@@ -22,7 +22,7 @@
 
 **Decision:** Low-risk retries auto-approve; refunds and higher-risk retries require an approver who is not the case assignee.
 
-**Consequences:** Faster low-risk handling; stronger control on money movement. One approval level only in this slice.
+**Consequences:** Faster low-risk handling; stronger control on money movement. One approval level only in this slice. Execution is at-least-once at the workflow boundary; the executor receives the proposal ID as a durable idempotency key and must dedupe. The mock is pure; production would use an outbox for exactly-once semantics.
 
 ## ADR-4: SQLite and append-only audit for the local slice
 
@@ -30,20 +30,12 @@
 
 **Decision:** Use embedded SQLite with constraints, WAL, foreign keys and audit triggers.
 
-**Consequences:** No external service; real enforcement. Production would use Aurora PostgreSQL and an immutable audit store; migrations would be managed separately.
+**Consequences:** No external service; real enforcement. `recursive_triggers` is enabled so INSERT OR REPLACE cannot bypass the append-only triggers. Production would use Aurora PostgreSQL and an immutable audit store; migrations would be managed separately.
 
-## ADR-5: What we intentionally did not build
+## ADR-5: Scope — optional React UI and what we intentionally did not build
 
-**Context:** 3-hour timebox.
+**Context:** The 3-hour timebox and the brief's "no browser UI required" guidance; a visible workflow still helps the round-2 walkthrough.
 
-**Decision:** No real payment rails, real LLM, IdP/OAuth, multi-level approvals, multi-currency, Docker or cloud deployment.
+**Decision:** Add a small optional React/Vite client in `ui/` that calls the JSON API; the API, demo and verify commands remain the core path. Do not build real payment rails, a real LLM, IdP/OAuth, multi-level approvals, multi-currency, Docker or cloud deployment.
 
-**Consequences:** A small, verifiable slice; each omission is documented with its production path.
-
-## ADR-6: Separate React/Vite demo UI
-
-**Context:** The brief does not require a browser UI, but a visible workflow improves the round-2 walkthrough.
-
-**Decision:** Add a small React/Vite client in `ui/` that calls the JSON API. It is optional; the API, demo and verify commands remain the core path. The API is still the security boundary; the UI uses synthetic demo keys.
-
-**Consequences:** Better demo and role/separation-of-duties visibility. Node is an optional prerequisite; production would use SSO and a backend-for-frontend, never service keys in the browser.
+**Consequences:** Better demo and role/separation-of-duties visibility; Node is an optional prerequisite. The API remains the security boundary; the UI uses synthetic demo keys. Each omission is documented with its production path.

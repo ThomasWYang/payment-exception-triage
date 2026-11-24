@@ -101,40 +101,48 @@ All money is integer cents; currency is AUD only; timestamps are UTC ISO 8601.
 | `GET` | `/v1/cases/{id}/audit` | ANALYST / APPROVER | Audit trail |
 | `GET` | `/healthz`, `/readyz`, `/status` | public (local) | Liveness, readiness, counters |
 
-Business outcomes (policy rejection, escalation, executor failure) return 200 with the case status and reason codes. Transport/auth/validation errors use 4xx/5xx with a consistent error envelope.
+The create-case request does not accept an assignee; the server sets it to the creating analyst. Business outcomes (policy rejection, escalation, executor failure) return 200 with the case status and reason codes. Transport/auth/validation errors use 4xx/5xx with a consistent error envelope.
 
 ## Policy, roles and separation of duties
 
 - Tool allowlist and schema validation at the gateway.
 - Action allowlist and action/exception compatibility.
-- Refund amount > 0, ≤ original settled amount and ≤ the refund cap.
+- Refund amount > 0, ≤ original settled amount, ≤ the refund cap, and the account must be active.
 - Retry only for failed, retryable payments on active accounts; amount fixed to the original.
 - Refunds always require approval; retries above the auto-retry limit require approval.
 - The approver must hold the `APPROVER` role and must not be the case assignee.
 - Duplicate approval/execution replays the prior result.
-- Degraded mode / `AUTO_APPROVE_ENABLED=false` forces approval for financial actions.
+- Degraded mode / `AUTO_APPROVE_ENABLED=false` forces approval for retries, refunds and holds.
 
 ## Security and privacy
 
 - The agent has no execute tool; only read-only tools are exposed.
+- The gateway keeps the repository private and exposes only the read tools; the deterministic planner is trusted code. An untrusted/LLM planner should run out of process.
 - Policy is enforced in the service, not in a prompt.
 - Synthetic API keys map to actor/role; production uses the enterprise IdP/OAuth.
 - Parameterized SQL, Pydantic validation and a request-size limit.
+- Requests must carry Content-Length; chunked bodies are rejected. The local guard is a backstop; production enforces the limit at the API gateway/WAF.
 - PII redaction before logging or storing free text.
 - No raw PII in logs or audit; audit stores hashes and reason codes.
-- Append-only audit with UPDATE/DELETE triggers.
+- Append-only audit with UPDATE/DELETE triggers plus `recursive_triggers`, so INSERT OR REPLACE cannot bypass them.
+- Idempotency keys are globally scoped per deployment; clients should use UUIDs.
+- Tool calls are logged as structured `tool_called` events; the audit table records decisions.
 - No outbound network calls in the core path.
 - Production: SSO, Secrets Manager, KMS, least-privilege DB roles, WAF and retention policy.
 
 ## Failure handling and degrade
 
 - Planner/tool failure → safe abstain, case `ESCALATED`.
+- The planner runs under a real deadline; a hung planner returns an escalation. The worker is a daemon thread and cannot be force-killed.
 - Executor failure → case `FAILED`; no automatic retry storm.
+- Execution is at-least-once at the workflow boundary; the executor receives the proposal ID as a durable idempotency key and must dedupe. The mock is pure; production would use an outbox for exactly-once semantics.
+- Policy documents are validated at startup (fail fast); a policy failure during triage escalates.
 - Invalid config → fail fast at startup.
-- DB unavailable → `/readyz` 503; writes fail closed.
-- `DEGRADED_MODE` / `AUTO_APPROVE_ENABLED=false` → no automatic financial execution.
-- Oversized request → 413; no side effect.
-- Audit is append-only; tampering is blocked at the database.
+- DB unavailable → `/readyz` 503 (it probes the schema and does not create a new DB); writes fail closed.
+- `DEGRADED_MODE` / `AUTO_APPROVE_ENABLED=false` → no automatic execution of retries, refunds or holds.
+- Oversized request → 413; chunked request → 411; no side effect.
+- Approval rationale is redacted and truncated to the field limit.
+- Audit is append-only; UPDATE/DELETE/REPLACE are blocked at the database.
 
 ## Key trade-offs
 
@@ -160,7 +168,7 @@ API Gateway/ALB → ECS Fargate or Lambda → Aurora PostgreSQL; SQS/Step Functi
 
 ## Optional React UI
 
-The `ui/` folder contains a small React/Vite client that calls the JSON API. It is a demo client only; it uses the synthetic demo keys, and the API remains the security boundary. Production would use SSO and a backend-for-frontend, never service keys in the browser. The core path (API + demo + verify) does not depend on it.
+The `ui/` folder contains a small React/Vite client that calls the JSON API. It is a demo client only; it uses the synthetic demo keys, and the API remains the security boundary. It reuses one idempotency key per pending approval and only shows approval actions to approver roles. Production would use SSO and a backend-for-frontend, never service keys in the browser. The core path (API + demo + verify) does not depend on it.
 
 ## What was intentionally not built
 
