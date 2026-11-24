@@ -1,0 +1,329 @@
+"""FastAPI application: auth, validation, error mapping and operational endpoints."""
+
+from __future__ import annotations
+
+import logging
+import time
+import uuid
+from collections.abc import Iterator
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from payment_triage.config import Identity, Settings, load_settings
+from payment_triage.db import connect, init_schema
+from payment_triage.executor import MockPaymentExecutor
+from payment_triage.logging import configure_logging
+from payment_triage.models import (
+    ApprovalResult,
+    ApproveRequest,
+    AuditList,
+    CaseList,
+    CaseStatus,
+    CaseView,
+    CreateCaseRequest,
+    Role,
+    TriageView,
+)
+from payment_triage.planner import DeterministicPlanner
+from payment_triage.policy import PolicyEngine
+from payment_triage.repository import Repository
+from payment_triage.workflow import Workflow, WorkflowError
+
+logger = logging.getLogger(__name__)
+
+
+class ApiError(Exception):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 400,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
+
+
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", uuid.uuid4().hex)
+
+
+def _error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    request_id: str,
+    details: dict[str, object] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+                "details": details or {},
+                "request_id": request_id,
+            }
+        },
+        headers={"X-Request-ID": request_id},
+    )
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    current = settings or load_settings()
+    configure_logging(current.log_level)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        conn = connect(current.database_path)
+        init_schema(conn)
+        conn.close()
+        app.state.started_at = time.monotonic()
+        yield
+
+    app = FastAPI(
+        title="Payment Exception Triage",
+        version=current.app_version,
+        lifespan=lifespan,
+    )
+    app.state.settings = current
+    app.state.started_at = time.monotonic()
+    app.state.auth_denials = 0
+
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        request.state.request_id = request_id
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                length = int(content_length)
+            except ValueError:
+                return _error_response(
+                    400, "INVALID_CONTENT_LENGTH", "Invalid Content-Length", request_id
+                )
+            if length > current.max_request_bytes:
+                return _error_response(
+                    413,
+                    "REQUEST_TOO_LARGE",
+                    "Request body is too large",
+                    request_id,
+                    {"max_request_bytes": current.max_request_bytes},
+                )
+        started = time.monotonic()
+        logger.info(
+            "request_started",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+            },
+        )
+        response = await call_next(request)
+        latency_ms = round((time.monotonic() - started) * 1000, 2)
+        response.headers["X-Request-ID"] = request_id
+        logger.info(
+            "request_completed",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+            },
+        )
+        return response
+
+    @app.exception_handler(ApiError)
+    async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+        return _error_response(
+            exc.status_code, exc.code, exc.message, _request_id(request), exc.details
+        )
+
+    @app.exception_handler(WorkflowError)
+    async def handle_workflow_error(request: Request, exc: WorkflowError) -> JSONResponse:
+        details = {"reason_codes": exc.reason_codes} if exc.reason_codes else {}
+        return _error_response(
+            exc.http_status, exc.code, exc.message, _request_id(request), details
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        errors = [
+            {
+                "loc": list(error.get("loc", [])),
+                "msg": error.get("msg", ""),
+                "type": error.get("type", ""),
+            }
+            for error in exc.errors()
+        ]
+        return _error_response(
+            422,
+            "VALIDATION_ERROR",
+            "Request validation failed",
+            _request_id(request),
+            {"errors": errors},
+        )
+
+    @app.exception_handler(Exception)
+    async def handle_unhandled(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("unhandled_error", extra={"request_id": _request_id(request)})
+        return _error_response(
+            500,
+            "INTERNAL_ERROR",
+            "An internal error occurred",
+            _request_id(request),
+        )
+
+    def get_repo(request: Request) -> Iterator[Repository]:
+        conn = connect(request.app.state.settings.database_path)
+        try:
+            yield Repository(conn)
+        finally:
+            conn.close()
+
+    def get_workflow(
+        request: Request, repo: Repository = Depends(get_repo)
+    ) -> Workflow:
+        app_settings = request.app.state.settings
+        return Workflow(
+            repo=repo,
+            settings=app_settings,
+            planner=DeterministicPlanner(app_settings.refund_cap_cents),
+            policy=PolicyEngine(app_settings),
+            executor=MockPaymentExecutor(app_settings.executor_mode),
+        )
+
+    def require_identity(
+        request: Request,
+        api_key: str | None = Header(default=None, alias="X-API-Key"),
+    ) -> Identity:
+        identity = request.app.state.settings.identity_for(api_key)
+        if identity is None:
+            request.app.state.auth_denials += 1
+            logger.warning(
+                "auth_denied",
+                extra={
+                    "request_id": _request_id(request),
+                    "path": request.url.path,
+                },
+            )
+            raise ApiError("UNAUTHORIZED", "Missing or invalid API key", 401)
+        return identity
+
+    def require_role(role: Role):
+        def dependency(identity: Identity = Depends(require_identity)) -> Identity:
+            if identity.role is not role:
+                raise ApiError("FORBIDDEN", f"Requires role {role.value}", 403)
+            return identity
+
+        return dependency
+
+    def require_any_role(*roles: Role):
+        def dependency(identity: Identity = Depends(require_identity)) -> Identity:
+            if identity.role not in roles:
+                raise ApiError("FORBIDDEN", "Role not permitted", 403)
+            return identity
+
+        return dependency
+
+    @app.post("/v1/cases", response_model=CaseView, status_code=201)
+    def create_case(
+        payload: CreateCaseRequest,
+        identity: Identity = Depends(require_role(Role.ANALYST)),
+        workflow: Workflow = Depends(get_workflow),
+    ) -> CaseView:
+        case = workflow.create_case(payload, identity)
+        return CaseView(case=case)
+
+    @app.post("/v1/cases/{case_id}/triage", response_model=TriageView)
+    def triage(
+        case_id: str,
+        identity: Identity = Depends(require_role(Role.AGENT)),
+        workflow: Workflow = Depends(get_workflow),
+    ) -> TriageView:
+        return workflow.triage(case_id, identity)
+
+    @app.get("/v1/cases/{case_id}", response_model=CaseView)
+    def get_case(
+        case_id: str,
+        identity: Identity = Depends(require_any_role(Role.ANALYST, Role.APPROVER)),
+        workflow: Workflow = Depends(get_workflow),
+    ) -> CaseView:
+        return workflow.get_case_view(case_id)
+
+    @app.get("/v1/cases", response_model=CaseList)
+    def list_cases(
+        status: CaseStatus | None = None,
+        limit: int = Query(default=50, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        identity: Identity = Depends(require_any_role(Role.ANALYST, Role.APPROVER)),
+        workflow: Workflow = Depends(get_workflow),
+    ) -> CaseList:
+        items = workflow.list_case_views(status, limit, offset)
+        return CaseList(items=items, limit=limit, offset=offset)
+
+    @app.post("/v1/cases/{case_id}/approve", response_model=ApprovalResult)
+    def approve(
+        case_id: str,
+        payload: ApproveRequest,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        identity: Identity = Depends(require_role(Role.APPROVER)),
+        workflow: Workflow = Depends(get_workflow),
+    ) -> ApprovalResult:
+        return workflow.approve(case_id, identity, payload, idempotency_key)
+
+    @app.get("/v1/cases/{case_id}/audit", response_model=AuditList)
+    def audit(
+        case_id: str,
+        identity: Identity = Depends(require_any_role(Role.ANALYST, Role.APPROVER)),
+        workflow: Workflow = Depends(get_workflow),
+    ) -> AuditList:
+        return AuditList(items=workflow.get_audit(case_id))
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    def readyz(request: Request) -> JSONResponse:
+        conn = None
+        try:
+            conn = connect(request.app.state.settings.database_path)
+            conn.execute("SELECT 1")
+        except Exception:
+            return JSONResponse(status_code=503, content={"status": "unavailable"})
+        finally:
+            if conn is not None:
+                conn.close()
+        return JSONResponse(status_code=200, content={"status": "ready"})
+
+    @app.get("/status")
+    def service_status(
+        request: Request, workflow: Workflow = Depends(get_workflow)
+    ) -> dict[str, object]:
+        app_settings = request.app.state.settings
+        if app_settings.degraded_mode:
+            mode = "degraded"
+        elif not app_settings.auto_approve_enabled:
+            mode = "auto_approve_disabled"
+        else:
+            mode = "normal"
+        payload: dict[str, object] = {
+            "version": app_settings.app_version,
+            "mode": mode,
+            "uptime_seconds": round(time.monotonic() - request.app.state.started_at, 1),
+            "auth_denials": request.app.state.auth_denials,
+        }
+        payload.update(workflow.status())
+        return payload
+
+    return app

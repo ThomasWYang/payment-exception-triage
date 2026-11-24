@@ -44,11 +44,18 @@ logger = logging.getLogger(__name__)
 class WorkflowError(Exception):
     """A controlled workflow failure with an HTTP mapping."""
 
-    def __init__(self, code: str, message: str, http_status: int = 400) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        http_status: int = 400,
+        reason_codes: list[str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.http_status = http_status
+        self.reason_codes = reason_codes or []
 
 
 class Workflow:
@@ -270,7 +277,12 @@ class Workflow:
                     reason_codes=violations,
                     payload={"decision": request.decision.value},
                 )
-            raise WorkflowError("APPROVAL_DENIED", ", ".join(violations), 403)
+            raise WorkflowError(
+                "APPROVAL_DENIED",
+                ", ".join(violations),
+                403,
+                reason_codes=violations,
+            )
 
         request_hash = payload_hash(
             {

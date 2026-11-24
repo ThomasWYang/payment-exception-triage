@@ -281,6 +281,12 @@ class CaseList(BaseModel):
     offset: int
 
 
+class AuditList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AuditEvent]
+
+
 class ErrorDetail(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
