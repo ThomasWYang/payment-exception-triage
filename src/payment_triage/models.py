@@ -210,6 +210,19 @@ class PolicyDecision(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProposalDraft(BaseModel):
+    """Internal planner output before policy evaluation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    payment_id: str = Field(min_length=1, max_length=64)
+    action: Action
+    amount_cents: int | None = Field(default=None, gt=0)
+    rationale: str = Field(min_length=1, max_length=2000)
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+    reason_codes: list[str] = Field(default_factory=list)
+
+
 class CreateCaseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
