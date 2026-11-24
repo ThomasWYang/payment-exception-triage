@@ -14,7 +14,7 @@
 
 **Decision:** Expose only read-only tools to the planner. Execution is a service-side workflow after policy and, where required, human approval.
 
-**Consequences:** The agent cannot move money; the service enforces the boundary. The UI and API show the denials.
+**Consequences:** The agent cannot move money; the service enforces the boundary. The API and UI show the denials.
 
 ## ADR-3: Tiered approval with separation of duties
 
@@ -36,6 +36,14 @@
 
 **Context:** 3-hour timebox.
 
-**Decision:** No real payment rails, real LLM, IdP/OAuth, multi-level approvals, multi-currency, SPA framework, Docker or cloud deployment.
+**Decision:** No real payment rails, real LLM, IdP/OAuth, multi-level approvals, multi-currency, Docker or cloud deployment.
 
 **Consequences:** A small, verifiable slice; each omission is documented with its production path.
+
+## ADR-6: Separate React/Vite demo UI
+
+**Context:** The brief does not require a browser UI, but a visible workflow improves the round-2 walkthrough.
+
+**Decision:** Add a small React/Vite client in `ui/` that calls the JSON API. It is optional; the API, demo and verify commands remain the core path. The API is still the security boundary; the UI uses synthetic demo keys.
+
+**Consequences:** Better demo and role/separation-of-duties visibility. Node is an optional prerequisite; production would use SSO and a backend-for-frontend, never service keys in the browser.

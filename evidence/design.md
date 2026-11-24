@@ -9,13 +9,13 @@ The agent has no execute tool. The only write path is a proposal, and the servic
 ## Architecture
 
 ```text
-Client (browser UI / curl / demo script)
+Client (React UI / curl / demo)
         |
         v
 FastAPI API (auth, request ID, validation, size limit)
         |
         v
-Case Workflow (state machine, idempotency, orchestration)
+Case Workflow (state machine, idempotency, audit)
         |
         +--> Planner (deterministic; read-only tools only)
         |         |
@@ -25,7 +25,7 @@ Case Workflow (state machine, idempotency, orchestration)
         |         +--> account.lookup
         |         +--> policy.search
         |
-        +--> Policy Engine (rules, roles, separation of duties)
+        +--> Policy Engine (limits, roles, separation of duties)
                  |
                  +--> auto-approved --> Mock Executor (idempotent)
                  +--> pending approval --> Approver --> Mock Executor
@@ -34,6 +34,9 @@ Case Workflow (state machine, idempotency, orchestration)
         |
         v
 SQLite (cases, proposals, approvals, executions, audit)
+        |
+        v
+Append-only audit + JSON logs + /healthz /readyz /status
 ```
 
 ## Data flow
@@ -56,11 +59,82 @@ SQLite (cases, proposals, approvals, executions, audit)
 - **Executor**: protocol; mock implementation; idempotent by proposal.
 - **Repository**: parameterized SQL, constraints, foreign keys, WAL mode.
 - **Audit**: append-only table with triggers blocking UPDATE/DELETE.
-- **UI**: optional thin static client; not a security boundary.
+- **UI**: optional React/Vite demo client; not a security boundary.
+
+## Data model
+
+All money is integer cents; currency is AUD only; timestamps are UTC ISO 8601.
+
+| Table | Purpose | Key constraints |
+|---|---|---|
+| `payments` | Synthetic payments | `amount_cents > 0`, currency `AUD`, status `FAILED`/`SETTLED` |
+| `accounts` | Synthetic accounts | status `ACTIVE`/`CLOSED`/`BLOCKED` |
+| `cases` | Triage cases | `UNIQUE(payment_id)`, FK to payments |
+| `proposals` | Planner proposals + policy outcome | `UNIQUE(case_id)` |
+| `approvals` | Human decisions | `UNIQUE(proposal_id)` |
+| `executions` | Mock execution results | `UNIQUE(proposal_id)` (prevents double execution) |
+| `idempotency_keys` | Approval replay state | PK `key` |
+| `audit_events` | Append-only audit trail | triggers reject UPDATE/DELETE |
 
 ## State machine
 
-TBD — see the implementation and `intent.md`.
+| From | Event | To |
+|---|---|---|
+| `OPEN` | triage → auto-approved | `EXECUTED` / `FAILED` |
+| `OPEN` | triage → approval required | `PENDING_APPROVAL` |
+| `OPEN` | triage → policy reject | `REJECTED` |
+| `OPEN` | triage → planner abstain | `ESCALATED` |
+| `PENDING_APPROVAL` | approve | `EXECUTED` / `FAILED` |
+| `PENDING_APPROVAL` | reject | `REJECTED` |
+| `PENDING_APPROVAL` | duplicate approve (same key) | same result, no re-execution |
+| terminal | any write | `409 INVALID_STATE_TRANSITION` |
+
+## API
+
+| Method | Path | Role | Purpose |
+|---|---|---|---|
+| `POST` | `/v1/cases` | ANALYST | Create a case |
+| `POST` | `/v1/cases/{id}/triage` | AGENT | Run planner + policy |
+| `GET` | `/v1/cases/{id}` | ANALYST / APPROVER | Case view |
+| `GET` | `/v1/cases?status=...` | ANALYST / APPROVER | List / approval queue |
+| `POST` | `/v1/cases/{id}/approve` | APPROVER | Approve/reject; `Idempotency-Key` required |
+| `GET` | `/v1/cases/{id}/audit` | ANALYST / APPROVER | Audit trail |
+| `GET` | `/healthz`, `/readyz`, `/status` | public (local) | Liveness, readiness, counters |
+
+Business outcomes (policy rejection, escalation, executor failure) return 200 with the case status and reason codes. Transport/auth/validation errors use 4xx/5xx with a consistent error envelope.
+
+## Policy, roles and separation of duties
+
+- Tool allowlist and schema validation at the gateway.
+- Action allowlist and action/exception compatibility.
+- Refund amount > 0, ≤ original settled amount and ≤ the refund cap.
+- Retry only for failed, retryable payments on active accounts; amount fixed to the original.
+- Refunds always require approval; retries above the auto-retry limit require approval.
+- The approver must hold the `APPROVER` role and must not be the case assignee.
+- Duplicate approval/execution replays the prior result.
+- Degraded mode / `AUTO_APPROVE_ENABLED=false` forces approval for financial actions.
+
+## Security and privacy
+
+- The agent has no execute tool; only read-only tools are exposed.
+- Policy is enforced in the service, not in a prompt.
+- Synthetic API keys map to actor/role; production uses the enterprise IdP/OAuth.
+- Parameterized SQL, Pydantic validation and a request-size limit.
+- PII redaction before logging or storing free text.
+- No raw PII in logs or audit; audit stores hashes and reason codes.
+- Append-only audit with UPDATE/DELETE triggers.
+- No outbound network calls in the core path.
+- Production: SSO, Secrets Manager, KMS, least-privilege DB roles, WAF and retention policy.
+
+## Failure handling and degrade
+
+- Planner/tool failure → safe abstain, case `ESCALATED`.
+- Executor failure → case `FAILED`; no automatic retry storm.
+- Invalid config → fail fast at startup.
+- DB unavailable → `/readyz` 503; writes fail closed.
+- `DEGRADED_MODE` / `AUTO_APPROVE_ENABLED=false` → no automatic financial execution.
+- Oversized request → 413; no side effect.
+- Audit is append-only; tampering is blocked at the database.
 
 ## Key trade-offs
 
@@ -69,17 +143,7 @@ TBD — see the implementation and `intent.md`.
 - **Hand-written SQL vs ORM**: fewer dependencies and visible constraints; more boilerplate.
 - **Synchronous execution vs queue**: simpler slice; production would use SQS/Step Functions.
 - **API keys vs OAuth**: synthetic local stand-in; production uses the enterprise IdP.
-
-## Security and privacy
-
-- The agent has no execute tool; tool allowlist and schema validation.
-- The policy engine enforces amount caps, the original-amount cap, retryability, account status and action/exception compatibility.
-- Separation of duties: the approver must be a different person from the case assignee.
-- Idempotency keys and unique execution constraints prevent double execution.
-- Append-only audit with UPDATE/DELETE triggers.
-- No raw PII in logs or audit; free text is redacted.
-- Synthetic data only; no outbound network calls in the core path.
-- Production: SSO/OAuth, secrets manager, KMS, least-privilege DB roles, WAF and a retention policy.
+- **Thin React UI vs no UI**: better walkthrough; the API/demo remain the core path.
 
 ## Production / cloud shape
 
@@ -88,12 +152,19 @@ API Gateway/ALB → ECS Fargate or Lambda → Aurora PostgreSQL; SQS/Step Functi
 ## CI/CD promotion
 
 - **Local**: `python scripts/verify.py` (ruff + pytest + golden eval).
-- **PR**: the same checks on GitHub Actions.
+- **PR**: the same checks on GitHub Actions; optional UI build job.
 - **Build**: container image, SBOM, image scan (future).
 - **Dev**: Terraform deploy + smoke tests.
 - **Staging**: integration tests against managed services, load test (future).
 - **Prod**: manual approval, canary 5% → 25% → 100%, rollback on error/latency budget.
 
-## The optional UI
+## Optional React UI
 
-A static page at `/ui/` that calls the JSON API with synthetic demo keys. It exists to make the workflow and role denials visible; the API remains the security boundary. Production would use SSO and a backend-for-frontend, never service keys in the browser.
+The `ui/` folder contains a small React/Vite client that calls the JSON API. It is a demo client only; it uses the synthetic demo keys, and the API remains the security boundary. Production would use SSO and a backend-for-frontend, never service keys in the browser. The core path (API + demo + verify) does not depend on it.
+
+## What was intentionally not built
+
+- Real payment rails, real money, multi-currency/FX, partial refunds.
+- A real LLM runtime or external model provider.
+- Full IdP/OAuth, multi-level approval chains, delegated authority.
+- Cloud deployment, Docker packaging, rate limiting, background workers, event sourcing.
