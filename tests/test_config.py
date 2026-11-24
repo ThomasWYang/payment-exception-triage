@@ -11,6 +11,7 @@ def test_defaults_are_safe_and_synthetic() -> None:
     assert settings.executor_mode == "mock"
     assert settings.effective_degraded is False
     assert len(settings.api_keys) == 4
+    assert "http://localhost:5173" in settings.cors_origins
     assert settings.identity_for("agent-key").role is Role.AGENT
     assert settings.identity_for("approver-alice-key").actor == "user:alice"
     assert settings.identity_for("unknown") is None
@@ -56,6 +57,7 @@ def test_env_overrides() -> None:
         {"AUTO_APPROVE_ENABLED": "maybe"},
         {"API_KEY_AGENT": ""},
         {"API_KEY_AGENT": "analyst-key"},
+        {"CORS_ORIGINS": ""},
     ],
 )
 def test_invalid_config_rejected(env: dict[str, str]) -> None:

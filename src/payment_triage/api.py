@@ -7,10 +7,13 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from payment_triage.config import Identity, Settings, load_settings
 from payment_triage.db import connect, init_schema
@@ -33,6 +36,7 @@ from payment_triage.repository import Repository
 from payment_triage.workflow import Workflow, WorkflowError
 
 logger = logging.getLogger(__name__)
+UI_DIST = Path(__file__).resolve().parents[2] / "ui" / "dist"
 
 
 class ApiError(Exception):
@@ -95,6 +99,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = current
     app.state.started_at = time.monotonic()
     app.state.auth_denials = 0
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(current.cors_origins),
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
+    )
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
@@ -325,5 +336,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         payload.update(workflow.status())
         return payload
+
+    if UI_DIST.is_dir():
+        app.mount("/ui", StaticFiles(directory=UI_DIST, html=True), name="ui")
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        target = "/ui/" if UI_DIST.is_dir() else "/docs"
+        return RedirectResponse(url=target)
 
     return app

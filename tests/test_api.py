@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ ANALYST = {"X-API-Key": "analyst-key"}
 AGENT = {"X-API-Key": "agent-key"}
 APPROVER = {"X-API-Key": "approver-key"}
 ALICE_APPROVER = {"X-API-Key": "approver-alice-key"}
+UI_DIST = Path(__file__).resolve().parents[1] / "ui" / "dist"
 
 
 @pytest.fixture
@@ -156,6 +158,34 @@ def test_self_approval_api(client: TestClient, settings: Settings) -> None:
     body = response.json()["error"]
     assert body["code"] == "APPROVAL_DENIED"
     assert "SELF_APPROVAL_DENIED" in body["details"]["reason_codes"]
+
+
+def test_cors_preflight(client: TestClient) -> None:
+    response = client.options(
+        "/v1/cases",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert (
+        response.headers["access-control-allow-origin"]
+        == "http://localhost:5173"
+    )
+
+
+def test_root_redirect(client: TestClient) -> None:
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code in {302, 307}
+    assert response.headers["location"] in {"/ui/", "/docs"}
+
+
+@pytest.mark.skipif(not UI_DIST.is_dir(), reason="UI not built")
+def test_ui_served_when_built(client: TestClient) -> None:
+    response = client.get("/ui/")
+    assert response.status_code == 200
+    assert "Payment Exception Triage" in response.text
 
 
 def test_idempotency_api(client: TestClient, settings: Settings) -> None:

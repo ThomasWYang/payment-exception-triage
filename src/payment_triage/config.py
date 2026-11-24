@@ -34,6 +34,7 @@ class Settings:
     planner_max_tool_calls: int
     planner_timeout_seconds: float
     api_keys: Mapping[str, Identity]
+    cors_origins: tuple[str, ...]
     app_version: str = "0.1.0"
 
     @property
@@ -105,6 +106,16 @@ def _parse_api_keys(env: Mapping[str, str]) -> dict[str, Identity]:
     return result
 
 
+def _parse_cors_origins(env: Mapping[str, str]) -> tuple[str, ...]:
+    raw = env.get(
+        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    )
+    origins = tuple(origin.strip() for origin in raw.split(",") if origin.strip())
+    if not origins:
+        raise ConfigError("CORS_ORIGINS must contain at least one origin")
+    return origins
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     raw = os.environ if env is None else env
     executor_mode = raw.get("EXECUTOR_MODE", "mock").strip().lower()
@@ -127,5 +138,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         planner_max_tool_calls=_env_int(raw, "PLANNER_MAX_TOOL_CALLS", 8, minimum=1),
         planner_timeout_seconds=_env_float(raw, "PLANNER_TIMEOUT_SECONDS", 5.0, minimum=0.1),
         api_keys=_parse_api_keys(raw),
+        cors_origins=_parse_cors_origins(raw),
         app_version=raw.get("APP_VERSION", "0.1.0"),
     )
