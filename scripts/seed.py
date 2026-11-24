@@ -7,9 +7,17 @@ import json
 import sqlite3
 from pathlib import Path
 
+from payment_triage.audit import record_audit
 from payment_triage.config import load_settings
 from payment_triage.db import connect, init_schema
-from payment_triage.models import Account, Case, ExceptionType, Payment
+from payment_triage.models import (
+    Account,
+    AuditEventType,
+    Case,
+    ExceptionType,
+    Payment,
+    Role,
+)
 from payment_triage.repository import Repository
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +64,7 @@ def seed(database: Path, reset: bool = False) -> None:
             if exception_type is None:
                 continue
             case_id = f"CASE-{raw['id'].split('-')[1]}"
+            created = False
             try:
                 repo.create_case(
                     Case(
@@ -65,8 +74,19 @@ def seed(database: Path, reset: bool = False) -> None:
                         assignee="user:alice",
                     )
                 )
+                created = True
             except sqlite3.IntegrityError:
                 pass
+            if created:
+                record_audit(
+                    repo,
+                    case_id=case_id,
+                    actor="system:seed",
+                    role=Role.ANALYST,
+                    event_type=AuditEventType.CASE_CREATED,
+                    outcome="SUCCESS",
+                    payload={"payment_id": raw["id"]},
+                )
 
         print(
             f"Seeded {len(accounts)} accounts, {len(payments)} payments, "

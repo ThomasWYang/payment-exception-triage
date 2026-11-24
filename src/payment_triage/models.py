@@ -84,6 +84,7 @@ class AuditEventType(str, Enum):
     EXECUTION_FAILED = "EXECUTION_FAILED"
     ESCALATED = "ESCALATED"
     IDEMPOTENT_REPLAY = "IDEMPOTENT_REPLAY"
+    APPROVAL_DENIED = "APPROVAL_DENIED"
 
 
 def utcnow_iso() -> str:
@@ -261,6 +262,14 @@ class TriageView(BaseModel):
     case: Case
     proposal: Proposal
     policy: PolicyDecision
+    execution: Execution | None = None
+
+
+class ApprovalResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    case: Case
+    approval: Approval
     execution: Execution | None = None
 
 

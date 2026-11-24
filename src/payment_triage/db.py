@@ -117,7 +117,8 @@ END;
 """
 
 
-def connect(path: Path) -> sqlite3.Connection:
+def connect(path: str | Path) -> sqlite3.Connection:
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row

@@ -8,7 +8,11 @@ import pytest
 
 from payment_triage.config import Settings, load_settings
 from payment_triage.db import connect, init_schema
+from payment_triage.executor import MockPaymentExecutor
+from payment_triage.planner import DeterministicPlanner
+from payment_triage.policy import PolicyEngine
 from payment_triage.repository import Repository
+from payment_triage.workflow import Workflow
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,3 +40,14 @@ def conn(settings: Settings) -> Iterator[sqlite3.Connection]:
 @pytest.fixture
 def repo(conn: sqlite3.Connection) -> Repository:
     return Repository(conn)
+
+
+@pytest.fixture
+def workflow(repo: Repository, settings: Settings) -> Workflow:
+    return Workflow(
+        repo=repo,
+        settings=settings,
+        planner=DeterministicPlanner(settings.refund_cap_cents),
+        policy=PolicyEngine(settings),
+        executor=MockPaymentExecutor("mock"),
+    )
