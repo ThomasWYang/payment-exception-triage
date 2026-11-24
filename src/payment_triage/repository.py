@@ -41,6 +41,18 @@ class Repository:
         else:
             self.conn.execute("COMMIT")
 
+    @contextmanager
+    def read_transaction(self) -> Iterator[None]:
+        """Begin a deferred read transaction for a consistent snapshot."""
+        self.conn.execute("BEGIN DEFERRED")
+        try:
+            yield
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
+        else:
+            self.conn.execute("COMMIT")
+
     # Accounts -----------------------------------------------------------------
 
     def create_account(self, account: Account) -> None:
@@ -110,12 +122,12 @@ class Repository:
     ) -> list[Case]:
         if status is None:
             rows = self.conn.execute(
-                "SELECT * FROM cases ORDER BY created_at, id LIMIT ? OFFSET ?",
+                "SELECT * FROM cases ORDER BY rowid LIMIT ? OFFSET ?",
                 (limit, offset),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM cases WHERE status = ? ORDER BY created_at, id LIMIT ? OFFSET ?",
+                "SELECT * FROM cases WHERE status = ? ORDER BY rowid LIMIT ? OFFSET ?",
                 (status.value, limit, offset),
             ).fetchall()
         return [_case_from_row(row) for row in rows]

@@ -18,6 +18,7 @@ from payment_triage.models import (
     PolicyOutcome,
     Proposal,
     Role,
+    utcnow_iso,
 )
 
 
@@ -185,3 +186,36 @@ def test_status_counts_and_event_counts(repo) -> None:
     assert counts["OPEN"] == 1
     assert repo.count_events(AuditEventType.CASE_CREATED) == 1
     assert repo.count_events(AuditEventType.POLICY_REJECTED) == 0
+
+
+def test_audit_replace_is_blocked(repo) -> None:
+    repo.create_account(_account())
+    repo.create_payment(_payment())
+    repo.create_case(_case())
+    event_id = repo.append_audit(_audit())
+    with pytest.raises(sqlite3.DatabaseError):
+        repo.conn.execute(
+            """INSERT OR REPLACE INTO audit_events
+               (id, case_id, actor, actor_role, event_type, outcome,
+                reason_codes_json, payload_hash, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                event_id,
+                "CASE-1",
+                "attacker",
+                "AGENT",
+                "CASE_CREATED",
+                "TAMPERED",
+                "[]",
+                "x",
+                utcnow_iso(),
+            ),
+        )
+
+
+def test_list_cases_preserves_insertion_order(repo) -> None:
+    repo.create_account(_account())
+    for payment_id, case_id in [("PAY-A", "CASE-Z"), ("PAY-B", "CASE-A")]:
+        repo.create_payment(_payment(payment_id=payment_id))
+        repo.create_case(_case(case_id=case_id, payment_id=payment_id))
+    assert [case.id for case in repo.list_cases()] == ["CASE-Z", "CASE-A"]

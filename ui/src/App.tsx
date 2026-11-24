@@ -6,6 +6,7 @@ import {
   getAudit,
   getStatus,
   listCases,
+  newIdempotencyKey,
   triageCase,
   type AuditEvent,
   type CaseView,
@@ -19,7 +20,11 @@ const ROLE_LABELS: Record<RoleKey, string> = {
   approverAlice: "Approver Alice (SoD test)",
 };
 
-type PendingApproval = { caseId: string; decision: "APPROVE" | "REJECT" };
+type PendingApproval = {
+  caseId: string;
+  decision: "APPROVE" | "REJECT";
+  idempotencyKey: string;
+};
 type AuditState = { caseId: string; events: AuditEvent[] };
 
 function statusClass(status: string): string {
@@ -83,13 +88,23 @@ export default function App() {
     }
   }
 
+  function openApproval(caseId: string, decision: "APPROVE" | "REJECT") {
+    setPending({ caseId, decision, idempotencyKey: newIdempotencyKey() });
+  }
+
   async function confirmApproval() {
     if (!pending) {
       return;
     }
     setBusy(pending.caseId);
     try {
-      await approveCase(pending.caseId, API_KEYS[role], pending.decision, rationale);
+      await approveCase(
+        pending.caseId,
+        API_KEYS[role],
+        pending.decision,
+        rationale,
+        pending.idempotencyKey,
+      );
       setPending(null);
       await refresh();
     } catch (err) {
@@ -217,27 +232,24 @@ export default function App() {
                         {busy === item.id ? "Triaging…" : "Triage"}
                       </button>
                     )}
-                    {item.status === "PENDING_APPROVAL" && (
-                      <>
-                        <button
-                          onClick={() =>
-                            setPending({ caseId: item.id, decision: "APPROVE" })
-                          }
-                          disabled={busy === item.id}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          className="danger"
-                          onClick={() =>
-                            setPending({ caseId: item.id, decision: "REJECT" })
-                          }
-                          disabled={busy === item.id}
-                        >
-                          Reject
-                        </button>
-                      </>
-                    )}
+                    {item.status === "PENDING_APPROVAL" &&
+                      (role === "approver" || role === "approverAlice") && (
+                        <>
+                          <button
+                            onClick={() => openApproval(item.id, "APPROVE")}
+                            disabled={busy === item.id}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            className="danger"
+                            onClick={() => openApproval(item.id, "REJECT")}
+                            disabled={busy === item.id}
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
                     <button
                       className="secondary"
                       onClick={() => void openAudit(item.id)}

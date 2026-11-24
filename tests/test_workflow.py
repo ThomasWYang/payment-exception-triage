@@ -19,6 +19,7 @@ from payment_triage.models import (
 )
 from payment_triage.planner import DeterministicPlanner
 from payment_triage.policy import PolicyEngine
+from payment_triage.tools import ToolGateway
 from payment_triage.workflow import Workflow, WorkflowError
 
 AGENT = Identity("agent:triage-bot", Role.AGENT)
@@ -157,7 +158,7 @@ def test_policy_violation_rejected(repo, settings) -> None:
     class BadPlanner:
         version = "bad-v1"
 
-        def plan(self, case, gateway):
+        def plan(self, case: Case, gateway: ToolGateway) -> ProposalDraft:
             return ProposalDraft(
                 payment_id=case.payment_id,
                 action=Action.REFUND_REQUEST,

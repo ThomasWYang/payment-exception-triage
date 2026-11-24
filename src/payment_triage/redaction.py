@@ -5,7 +5,10 @@ from __future__ import annotations
 import re
 
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
-PHONE_RE = re.compile(r"(?<!\d)(?:\+?61[ -]?|0)[2-478](?:[ -]?\d){8}(?!\d)")
+PHONE_RE = re.compile(
+    r"(?<!\d)(?:\+?61[ -]?(?:\(0\)[ -]?)?|\(?0\)?[ -]?)"
+    r"[2-478]\)?(?:[ -]?\d){8}(?!\d)"
+)
 CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 
 CARD_PLACEHOLDER = "[REDACTED:CREDIT_CARD]"

@@ -223,13 +223,20 @@ class ProposalDraft(BaseModel):
     evidence: list[EvidenceRef] = Field(default_factory=list)
     reason_codes: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _check_amount(self) -> "ProposalDraft":
+        if self.action in {Action.RETRY, Action.REFUND_REQUEST} and self.amount_cents is None:
+            raise ValueError("amount_cents is required for RETRY and REFUND_REQUEST")
+        if self.action in {Action.HOLD, Action.ESCALATE} and self.amount_cents is not None:
+            raise ValueError("amount_cents must be null for HOLD and ESCALATE")
+        return self
+
 
 class CreateCaseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     payment_id: str = Field(min_length=1, max_length=64)
     exception_type: ExceptionType
-    assignee: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class ApproveRequest(BaseModel):

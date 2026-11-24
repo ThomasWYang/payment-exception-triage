@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from payment_triage.api import create_app
-from payment_triage.config import Settings
+from payment_triage.config import Settings, load_settings
 from payment_triage.db import connect
 from payment_triage.models import Account, AccountStatus, Payment, PaymentStatus
 from payment_triage.repository import Repository
@@ -206,3 +206,86 @@ def test_idempotency_api(client: TestClient, settings: Settings) -> None:
     )
     assert missing.status_code == 400
     assert missing.json()["error"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+def test_create_case_rejects_client_assignee(
+    client: TestClient, settings: Settings
+) -> None:
+    _seed_payment(settings, amount=25000)
+    response = client.post(
+        "/v1/cases",
+        json={
+            "payment_id": "PAY-1",
+            "exception_type": "FAILED_PAYMENT",
+            "assignee": "user:carol",
+        },
+        headers=ANALYST,
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_readyz_missing_schema(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("payment_triage.api.init_schema", lambda conn: None)
+    with TestClient(create_app(settings)) as local_client:
+        response = local_client.get("/readyz")
+    assert response.status_code == 503
+
+
+def test_readyz_missing_database(settings: Settings) -> None:
+    with TestClient(create_app(settings)) as local_client:
+        settings.database_path.unlink()
+        assert local_client.get("/readyz").status_code == 503
+
+
+def test_missing_policy_startup_fails(tmp_path: Path) -> None:
+    bad = load_settings(
+        {
+            "DATABASE_PATH": str(tmp_path / "bad.db"),
+            "POLICY_PATH": str(tmp_path / "missing.json"),
+        }
+    )
+    with pytest.raises(FileNotFoundError):
+        with TestClient(create_app(bad)):
+            pass
+
+
+def test_chunked_request_rejected(client: TestClient) -> None:
+    response = client.post(
+        "/v1/cases",
+        content=iter([b"x"]),
+        headers={**ANALYST, "Transfer-Encoding": "chunked"},
+    )
+    assert response.status_code == 411
+    assert response.json()["error"]["code"] == "LENGTH_REQUIRED"
+
+
+def test_oversized_request_has_cors_headers(client: TestClient) -> None:
+    response = client.post(
+        "/v1/cases",
+        content=b"x" * 70000,
+        headers={**ANALYST, "Origin": "http://localhost:5173"},
+    )
+    assert response.status_code == 413
+    assert (
+        response.headers["access-control-allow-origin"]
+        == "http://localhost:5173"
+    )
+
+
+def test_long_rationale_redaction_truncated(
+    client: TestClient, settings: Settings
+) -> None:
+    _seed_payment(settings, amount=500000)
+    case_id = _create_case(client)
+    client.post(f"/v1/cases/{case_id}/triage", headers=AGENT)
+    rationale = ("a@b.c " * 333).strip()
+    response = client.post(
+        f"/v1/cases/{case_id}/approve",
+        json={"decision": "APPROVE", "rationale": rationale},
+        headers={**APPROVER, "Idempotency-Key": "key-long"},
+    )
+    assert response.status_code == 200, response.text
+    assert len(response.json()["approval"]["rationale_redacted"]) <= 2000

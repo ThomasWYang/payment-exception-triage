@@ -1,7 +1,7 @@
 import time
 
 from payment_triage.config import Identity, load_settings
-from payment_triage.executor import MockPaymentExecutor
+from payment_triage.executor import ExecutionResult, MockPaymentExecutor
 from payment_triage.models import (
     Account,
     AccountStatus,
@@ -9,13 +9,16 @@ from payment_triage.models import (
     Case,
     CaseStatus,
     ExceptionType,
+    ExecutionStatus,
     Payment,
     PaymentStatus,
+    Proposal,
     ProposalDraft,
     Role,
 )
 from payment_triage.planner import DeterministicPlanner
 from payment_triage.policy import PolicyEngine
+from payment_triage.tools import ToolGateway
 from payment_triage.workflow import Workflow
 
 AGENT = Identity("agent:triage-bot", Role.AGENT)
@@ -55,14 +58,14 @@ def _workflow(repo, settings, *, planner=None, executor=None) -> Workflow:
 class ExplodingPlanner:
     version = "exploding-v1"
 
-    def plan(self, case, gateway):
+    def plan(self, case: Case, gateway: ToolGateway) -> ProposalDraft:
         raise RuntimeError("boom")
 
 
 class SlowPlanner:
     version = "slow-v1"
 
-    def plan(self, case, gateway):
+    def plan(self, case: Case, gateway: ToolGateway) -> ProposalDraft:
         time.sleep(0.2)
         return ProposalDraft(
             payment_id=case.payment_id, action=Action.ESCALATE, rationale="slow"
@@ -70,8 +73,38 @@ class SlowPlanner:
 
 
 class ExplodingExecutor:
-    def execute(self, proposal, payment):
+    def execute(
+        self, proposal: Proposal, payment: Payment, idempotency_key: str
+    ) -> ExecutionResult:
+        _ = idempotency_key
         raise RuntimeError("boom")
+
+
+class InvalidDraftPlanner:
+    version = "invalid-v1"
+
+    def plan(self, case: Case, gateway: ToolGateway) -> ProposalDraft:
+        return ProposalDraft.model_construct(
+            payment_id=case.payment_id,
+            action=Action.RETRY,
+            amount_cents=None,
+            rationale="invalid",
+            evidence=[],
+            reason_codes=[],
+        )
+
+
+class RecordingExecutor:
+    def __init__(self) -> None:
+        self.keys: list[str] = []
+
+    def execute(
+        self, proposal: Proposal, payment: Payment, idempotency_key: str
+    ) -> ExecutionResult:
+        self.keys.append(idempotency_key)
+        return ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED, execution_ref="ok"
+        )
 
 
 def test_planner_exception_escalates(repo, settings) -> None:
@@ -93,9 +126,45 @@ def test_planner_timeout_escalates(repo, settings) -> None:
     )
     _seed(repo)
     wf = _workflow(repo, slow, planner=SlowPlanner())
+    started = time.monotonic()
     result = wf.triage("CASE-1", AGENT)
+    elapsed = time.monotonic() - started
     assert result.case.status is CaseStatus.ESCALATED
     assert "PLANNER_TIMEOUT" in result.policy.reason_codes
+    assert elapsed < 0.2
+
+
+def test_invalid_planner_draft_escalates(repo, settings) -> None:
+    _seed(repo)
+    wf = _workflow(repo, settings, planner=InvalidDraftPlanner())
+    result = wf.triage("CASE-1", AGENT)
+    assert result.case.status is CaseStatus.ESCALATED
+    assert "PLANNER_ERROR" in result.policy.reason_codes
+
+
+def test_executor_receives_idempotency_key(repo, settings) -> None:
+    _seed(repo)
+    executor = RecordingExecutor()
+    wf = _workflow(repo, settings, executor=executor)
+    result = wf.triage("CASE-1", AGENT)
+    assert result.execution is not None
+    view = wf.get_case_view("CASE-1")
+    assert view.proposal is not None
+    assert executor.keys == [view.proposal.id]
+
+
+def test_missing_policy_path_escalates(repo, settings) -> None:
+    broken = load_settings(
+        {
+            "DATABASE_PATH": str(settings.database_path),
+            "POLICY_PATH": "missing-policies.json",
+        }
+    )
+    _seed(repo)
+    wf = _workflow(repo, broken)
+    result = wf.triage("CASE-1", AGENT)
+    assert result.case.status is CaseStatus.ESCALATED
+    assert "TOOL_INIT_ERROR" in result.policy.reason_codes
 
 
 def test_executor_exception_marks_failed(repo, settings) -> None:

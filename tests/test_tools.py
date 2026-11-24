@@ -2,7 +2,9 @@ import pytest
 
 from payment_triage.models import Account, AccountStatus, Payment, PaymentStatus
 from payment_triage.tools import (
+    AccountLookupArgs,
     AccountLookupResult,
+    PaymentLookupArgs,
     PaymentLookupResult,
     PolicySearchResult,
     ToolError,
@@ -72,3 +74,30 @@ def test_tool_call_limit(repo, settings) -> None:
     with pytest.raises(ToolError) as exc:
         gateway.call("account.lookup", {"account_id": "ACC-1"})
     assert exc.value.code == "TOOL_CALL_LIMIT"
+
+
+def test_invalid_attempts_count_toward_limit(repo, settings) -> None:
+    gateway = ToolGateway(repo, settings.policy_path, max_calls=1)
+    with pytest.raises(ToolError) as exc:
+        gateway.call("payment.lookup", {"payment_id": ""})
+    assert exc.value.code == "INVALID_TOOL_ARGS"
+    with pytest.raises(ToolError) as exc:
+        gateway.call("payment.lookup", {"payment_id": "PAY-1"})
+    assert exc.value.code == "TOOL_CALL_LIMIT"
+
+
+def test_wrong_model_type_and_constructed_args_rejected(repo, settings) -> None:
+    gateway = ToolGateway(repo, settings.policy_path)
+    with pytest.raises(ToolError) as exc:
+        gateway.call("payment.lookup", AccountLookupArgs(account_id="ACC-1"))
+    assert exc.value.code == "INVALID_TOOL_ARGS"
+    with pytest.raises(ToolError) as exc:
+        gateway.call(
+            "payment.lookup", PaymentLookupArgs.model_construct(payment_id="")
+        )
+    assert exc.value.code == "INVALID_TOOL_ARGS"
+
+
+def test_gateway_does_not_expose_repository(repo, settings) -> None:
+    gateway = ToolGateway(repo, settings.policy_path)
+    assert not hasattr(gateway, "repo")

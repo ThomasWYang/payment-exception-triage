@@ -36,7 +36,7 @@ class PolicyEngine:
         if draft.action is Action.RETRY:
             reasons.extend(self._check_retry(payment, account, draft))
         elif draft.action is Action.REFUND_REQUEST:
-            reasons.extend(self._check_refund(payment, draft))
+            reasons.extend(self._check_refund(payment, account, draft))
 
         details = {
             "action": draft.action.value,
@@ -60,6 +60,17 @@ class PolicyEngine:
                 requires_approval=False,
                 details=details,
             )
+        if self.settings.effective_degraded and draft.action in {
+            Action.RETRY,
+            Action.REFUND_REQUEST,
+            Action.HOLD,
+        }:
+            return PolicyDecision(
+                outcome=PolicyOutcome.PENDING_APPROVAL,
+                reason_codes=["DEGRADED_MODE", *draft.reason_codes],
+                requires_approval=True,
+                details=details,
+            )
         if draft.action is Action.HOLD:
             return PolicyDecision(
                 outcome=PolicyOutcome.AUTO_APPROVED,
@@ -76,13 +87,6 @@ class PolicyEngine:
             )
 
         # RETRY
-        if self.settings.effective_degraded:
-            return PolicyDecision(
-                outcome=PolicyOutcome.PENDING_APPROVAL,
-                reason_codes=["DEGRADED_MODE", *draft.reason_codes],
-                requires_approval=True,
-                details=details,
-            )
         if (
             draft.amount_cents is not None
             and draft.amount_cents <= self.settings.auto_retry_limit_cents
@@ -118,10 +122,16 @@ class PolicyEngine:
             reasons.append("RETRY_AMOUNT_MISMATCH")
         return reasons
 
-    def _check_refund(self, payment: Payment, draft: ProposalDraft) -> list[str]:
+    def _check_refund(
+        self, payment: Payment, account: Account, draft: ProposalDraft
+    ) -> list[str]:
         reasons: list[str] = []
         if payment.status is not PaymentStatus.SETTLED:
             reasons.append("PAYMENT_NOT_SETTLED")
+        if account.status is AccountStatus.CLOSED:
+            reasons.append("ACCOUNT_CLOSED")
+        elif account.status is not AccountStatus.ACTIVE:
+            reasons.append("ACCOUNT_NOT_ACTIVE")
         if draft.amount_cents is None:
             reasons.append("AMOUNT_REQUIRED")
         else:

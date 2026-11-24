@@ -12,6 +12,7 @@ def test_defaults_are_safe_and_synthetic() -> None:
     assert settings.effective_degraded is False
     assert len(settings.api_keys) == 4
     assert "http://localhost:5173" in settings.cors_origins
+    assert "http://localhost:8000" in settings.cors_origins
     assert settings.identity_for("agent-key").role is Role.AGENT
     assert settings.identity_for("approver-alice-key").actor == "user:alice"
     assert settings.identity_for("unknown") is None

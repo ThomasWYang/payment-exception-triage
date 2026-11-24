@@ -108,7 +108,9 @@ def _parse_api_keys(env: Mapping[str, str]) -> dict[str, Identity]:
 
 def _parse_cors_origins(env: Mapping[str, str]) -> tuple[str, ...]:
     raw = env.get(
-        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:8000,http://127.0.0.1:8000",
     )
     origins = tuple(origin.strip() for origin in raw.split(",") if origin.strip())
     if not origins:

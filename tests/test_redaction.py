@@ -9,6 +9,14 @@ def test_phone_redacted() -> None:
     assert redact_pii("call +61 412 345 678") == "call [REDACTED:PHONE]"
 
 
+def test_parenthesized_phone_formats_redacted() -> None:
+    assert redact_pii("call (04) 1234 5678") == "call [REDACTED:PHONE]"
+    assert redact_pii("call 04 1234 5678") == "call [REDACTED:PHONE]"
+    assert (
+        redact_pii("call +61 (0) 412 345 678") == "call [REDACTED:PHONE]"
+    )
+
+
 def test_valid_card_redacted() -> None:
     assert redact_pii("card 4111 1111 1111 1111") == "card [REDACTED:CREDIT_CARD]"
 

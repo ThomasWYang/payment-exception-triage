@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi import Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -33,6 +34,7 @@ from payment_triage.models import (
 from payment_triage.planner import DeterministicPlanner
 from payment_triage.policy import PolicyEngine
 from payment_triage.repository import Repository
+from payment_triage.tools import load_policy_docs
 from payment_triage.workflow import Workflow, WorkflowError
 
 logger = logging.getLogger(__name__)
@@ -84,10 +86,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(current.log_level)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         conn = connect(current.database_path)
         init_schema(conn)
         conn.close()
+        load_policy_docs(current.policy_path)
         app.state.started_at = time.monotonic()
         yield
 
@@ -99,19 +102,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = current
     app.state.started_at = time.monotonic()
     app.state.auth_denials = 0
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=list(current.cors_origins),
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["X-Request-ID"],
-    )
+    app.state.auth_denials_lock = threading.Lock()
 
     @app.middleware("http")
-    async def request_context(request: Request, call_next):
+    async def request_context(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
         request.state.request_id = request_id
+        transfer_encoding = request.headers.get("transfer-encoding", "").lower()
+        if "chunked" in transfer_encoding:
+            return _error_response(
+                411,
+                "LENGTH_REQUIRED",
+                "Chunked requests are not supported",
+                request_id,
+            )
         content_length = request.headers.get("content-length")
+        if content_length is None and request.method in {"POST", "PUT", "PATCH"}:
+            return _error_response(
+                411, "LENGTH_REQUIRED", "Content-Length is required", request_id
+            )
         if content_length is not None:
             try:
                 length = int(content_length)
@@ -136,19 +147,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "path": request.url.path,
             },
         )
-        response = await call_next(request)
-        latency_ms = round((time.monotonic() - started) * 1000, 2)
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+        finally:
+            latency_ms = round((time.monotonic() - started) * 1000, 2)
+            logger.info(
+                "request_completed",
+                extra={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": status_code,
+                    "latency_ms": latency_ms,
+                },
+            )
         response.headers["X-Request-ID"] = request_id
-        logger.info(
-            "request_completed",
-            extra={
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "latency_ms": latency_ms,
-            },
-        )
         return response
 
     @app.exception_handler(ApiError)
@@ -187,12 +202,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(Exception)
     async def handle_unhandled(request: Request, exc: Exception) -> JSONResponse:
         logger.exception("unhandled_error", extra={"request_id": _request_id(request)})
-        return _error_response(
+        response = _error_response(
             500,
             "INTERNAL_ERROR",
             "An internal error occurred",
             _request_id(request),
         )
+        origin = request.headers.get("origin")
+        if origin in current.cors_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+        return response
 
     def get_repo(request: Request) -> Iterator[Repository]:
         conn = connect(request.app.state.settings.database_path)
@@ -219,7 +239,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Identity:
         identity = request.app.state.settings.identity_for(api_key)
         if identity is None:
-            request.app.state.auth_denials += 1
+            with request.app.state.auth_denials_lock:
+                request.app.state.auth_denials += 1
             logger.warning(
                 "auth_denied",
                 extra={
@@ -230,7 +251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ApiError("UNAUTHORIZED", "Missing or invalid API key", 401)
         return identity
 
-    def require_role(role: Role):
+    def require_role(role: Role) -> Callable[[Identity], Identity]:
         def dependency(identity: Identity = Depends(require_identity)) -> Identity:
             if identity.role is not role:
                 raise ApiError("FORBIDDEN", f"Requires role {role.value}", 403)
@@ -238,7 +259,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return dependency
 
-    def require_any_role(*roles: Role):
+    def require_any_role(*roles: Role) -> Callable[[Identity], Identity]:
         def dependency(identity: Identity = Depends(require_identity)) -> Identity:
             if identity.role not in roles:
                 raise ApiError("FORBIDDEN", "Role not permitted", 403)
@@ -306,10 +327,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/readyz")
     def readyz(request: Request) -> JSONResponse:
+        path = request.app.state.settings.database_path
+        if not path.exists():
+            return JSONResponse(status_code=503, content={"status": "unavailable"})
         conn = None
         try:
-            conn = connect(request.app.state.settings.database_path)
-            conn.execute("SELECT 1")
+            conn = connect(path)
+            conn.execute("SELECT 1 FROM cases LIMIT 1")
         except Exception:
             return JSONResponse(status_code=503, content={"status": "unavailable"})
         finally:
@@ -337,12 +361,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload.update(workflow.status())
         return payload
 
-    if UI_DIST.is_dir():
+    ui_mounted = UI_DIST.is_dir()
+    if ui_mounted:
         app.mount("/ui", StaticFiles(directory=UI_DIST, html=True), name="ui")
 
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:
-        target = "/ui/" if UI_DIST.is_dir() else "/docs"
-        return RedirectResponse(url=target)
+        return RedirectResponse(url="/ui/" if ui_mounted else "/docs")
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(current.cors_origins),
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
+    )
     return app

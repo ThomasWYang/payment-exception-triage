@@ -134,14 +134,17 @@ export function approveCase(
   apiKey: string,
   decision: "APPROVE" | "REJECT",
   rationale: string,
+  idempotencyKey: string,
 ): Promise<unknown> {
-  const idempotencyKey =
-    crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   return request(`/v1/cases/${caseId}/approve`, apiKey, {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({ decision, rationale }),
   });
+}
+
+export function newIdempotencyKey(): string {
+  return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
 
 export function getAudit(caseId: string, apiKey: string): Promise<AuditList> {

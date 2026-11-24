@@ -207,6 +207,40 @@ def test_degraded_mode_forces_approval(settings) -> None:
     assert "DEGRADED_MODE" in decision.reason_codes
 
 
+def test_degraded_mode_holds_for_approval(settings) -> None:
+    degraded = load_settings(
+        {
+            "DEGRADED_MODE": "true",
+            "AUTO_RETRY_LIMIT_CENTS": "100000",
+            "REFUND_CAP_CENTS": "1000000",
+        }
+    )
+    decision = PolicyEngine(degraded).evaluate(
+        _case(),
+        _payment(failure_code="INSUFFICIENT_FUNDS", amount=120000),
+        _account(),
+        _draft(Action.HOLD, amount=None),
+    )
+    assert decision.outcome is PolicyOutcome.PENDING_APPROVAL
+    assert "DEGRADED_MODE" in decision.reason_codes
+
+
+def test_refund_on_closed_account_rejected(settings) -> None:
+    decision = PolicyEngine(settings).evaluate(
+        _case(ExceptionType.DUPLICATE_PAYMENT),
+        _payment(
+            status=PaymentStatus.SETTLED,
+            failure_code=None,
+            amount=150000,
+            duplicate_of="PAY-0",
+        ),
+        _account(AccountStatus.CLOSED),
+        _draft(Action.REFUND_REQUEST, amount=150000),
+    )
+    assert decision.outcome is PolicyOutcome.REJECTED
+    assert "ACCOUNT_CLOSED" in decision.reason_codes
+
+
 def test_approver_checks(settings) -> None:
     engine = PolicyEngine(settings)
     case = _case()

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+import queue
 import sqlite3
-import time
+import threading
 import uuid
+
+from pydantic import ValidationError
 
 from payment_triage.audit import payload_hash, record_audit
 from payment_triage.config import Identity, Settings
@@ -98,7 +101,7 @@ class Workflow:
             id=_new_id("CASE"),
             payment_id=payment.id,
             exception_type=request.exception_type,
-            assignee=request.assignee or identity.actor,
+            assignee=identity.actor,
         )
         with self.repo.transaction():
             try:
@@ -138,25 +141,62 @@ class Workflow:
         if account is None:
             raise WorkflowError("ACCOUNT_NOT_FOUND", "Account not found", 500)
 
-        gateway = ToolGateway(
-            self.repo,
-            self.settings.policy_path,
-            max_calls=self.settings.planner_max_tool_calls,
-        )
-        draft = self._plan(case, gateway)
+        try:
+            gateway = ToolGateway(
+                self.repo,
+                self.settings.policy_path,
+                max_calls=self.settings.planner_max_tool_calls,
+            )
+        except Exception:  # noqa: BLE001 - fail safe, escalate
+            logger.exception("tool gateway init failed", extra={"case_id": case.id})
+            draft = _escalation_draft(
+                case, "TOOL_INIT_ERROR", "Policy/tool configuration failed"
+            )
+        else:
+            draft = self._plan(case, gateway)
+            for call in gateway.calls:
+                logger.info(
+                    "tool_called",
+                    extra={
+                        "case_id": case.id,
+                        "tool": call.name,
+                        "args_hash": call.args_hash,
+                        "outcome": call.outcome,
+                        "summary": call.summary,
+                    },
+                )
         decision = self.policy.evaluate(case, payment, account, draft)
-        proposal = Proposal(
-            id=_new_id("PROP"),
-            case_id=case.id,
-            action=draft.action,
-            amount_cents=draft.amount_cents,
-            rationale=draft.rationale,
-            evidence=draft.evidence,
-            planner_version=self.planner.version,
-            policy_outcome=decision.outcome,
-            reason_codes=decision.reason_codes,
-            requires_approval=decision.requires_approval,
-        )
+        try:
+            proposal = Proposal(
+                id=_new_id("PROP"),
+                case_id=case.id,
+                action=draft.action,
+                amount_cents=draft.amount_cents,
+                rationale=draft.rationale,
+                evidence=draft.evidence,
+                planner_version=self.planner.version,
+                policy_outcome=decision.outcome,
+                reason_codes=decision.reason_codes,
+                requires_approval=decision.requires_approval,
+            )
+        except ValidationError:
+            logger.exception("invalid planner draft", extra={"case_id": case.id})
+            draft = _escalation_draft(
+                case, "PLANNER_ERROR", "Planner produced an invalid proposal"
+            )
+            decision = self.policy.evaluate(case, payment, account, draft)
+            proposal = Proposal(
+                id=_new_id("PROP"),
+                case_id=case.id,
+                action=draft.action,
+                amount_cents=draft.amount_cents,
+                rationale=draft.rationale,
+                evidence=draft.evidence,
+                planner_version=self.planner.version,
+                policy_outcome=decision.outcome,
+                reason_codes=decision.reason_codes,
+                requires_approval=decision.requires_approval,
+            )
 
         with self.repo.transaction():
             current = self.repo.get_case(case.id)
@@ -329,12 +369,26 @@ class Workflow:
             proposal_id=proposal.id,
             decision=request.decision,
             approver=identity.actor,
-            rationale_redacted=redact_pii(request.rationale),
+            rationale_redacted=redact_pii(request.rationale)[:2000],
         )
         try:
             with self.repo.transaction():
                 current = self.repo.get_case(case.id)
                 if current is None or current.status is not CaseStatus.PENDING_APPROVAL:
+                    replay = self.repo.get_idempotency(idempotency_key)
+                    if replay is not None and replay["request_hash"] == request_hash:
+                        record_audit(
+                            self.repo,
+                            case_id=case.id,
+                            actor=identity.actor,
+                            role=identity.role,
+                            event_type=AuditEventType.IDEMPOTENT_REPLAY,
+                            outcome="REPLAY",
+                            payload={"idempotency_key": idempotency_key},
+                        )
+                        return ApprovalResult.model_validate_json(
+                            str(replay["response_json"])
+                        )
                     raise WorkflowError(
                         "INVALID_STATE_TRANSITION", "Case is no longer pending", 409
                     )
@@ -406,19 +460,20 @@ class Workflow:
     # Reads --------------------------------------------------------------------
 
     def get_case_view(self, case_id: str) -> CaseView:
-        case = self.repo.get_case(case_id)
-        if case is None:
-            raise WorkflowError("CASE_NOT_FOUND", "Case not found", 404)
-        proposal = self.repo.get_proposal_for_case(case.id)
-        approval = (
-            self.repo.get_approval_for_proposal(proposal.id) if proposal else None
-        )
-        execution = (
-            self.repo.get_execution_for_proposal(proposal.id) if proposal else None
-        )
-        return CaseView(
-            case=case, proposal=proposal, approval=approval, execution=execution
-        )
+        with self.repo.read_transaction():
+            case = self.repo.get_case(case_id)
+            if case is None:
+                raise WorkflowError("CASE_NOT_FOUND", "Case not found", 404)
+            proposal = self.repo.get_proposal_for_case(case.id)
+            approval = (
+                self.repo.get_approval_for_proposal(proposal.id) if proposal else None
+            )
+            execution = (
+                self.repo.get_execution_for_proposal(proposal.id) if proposal else None
+            )
+            return CaseView(
+                case=case, proposal=proposal, approval=approval, execution=execution
+            )
 
     def list_case_views(
         self, status: CaseStatus | None, limit: int, offset: int
@@ -449,17 +504,34 @@ class Workflow:
     # Internals ----------------------------------------------------------------
 
     def _plan(self, case: Case, gateway: ToolGateway) -> ProposalDraft:
-        started = time.monotonic()
-        try:
-            draft = self.planner.plan(case, gateway)
-        except Exception:  # noqa: BLE001 - fail safe, never execute
-            logger.exception("planner failed", extra={"case_id": case.id})
-            return _escalation_draft(case, "PLANNER_ERROR", "Planner failed")
-        if time.monotonic() - started > self.settings.planner_timeout_seconds:
+        result: queue.Queue[tuple[str, object]] = queue.Queue()
+
+        def worker() -> None:
+            try:
+                result.put(("ok", self.planner.plan(case, gateway)))
+            except Exception as exc:  # noqa: BLE001 - fail safe, never execute
+                result.put(("error", exc))
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        thread.join(self.settings.planner_timeout_seconds)
+        if thread.is_alive():
             return _escalation_draft(
                 case, "PLANNER_TIMEOUT", "Planner exceeded the time limit"
             )
-        return draft
+        try:
+            status, payload = result.get_nowait()
+        except queue.Empty:
+            return _escalation_draft(case, "PLANNER_ERROR", "Planner returned no result")
+        if status == "error":
+            logger.error("planner failed: %s", payload, extra={"case_id": case.id})
+            return _escalation_draft(case, "PLANNER_ERROR", "Planner failed")
+        if not isinstance(payload, ProposalDraft):
+            logger.error("planner returned an invalid draft", extra={"case_id": case.id})
+            return _escalation_draft(
+                case, "PLANNER_ERROR", "Planner returned an invalid draft"
+            )
+        return payload
 
     def _transition(
         self, case_id: str, expected: CaseStatus, new: CaseStatus
@@ -478,18 +550,24 @@ class Workflow:
         if existing is not None:
             return existing
         try:
-            result = self.executor.execute(proposal, payment)
+            result = self.executor.execute(proposal, payment, proposal.id)
         except Exception:  # noqa: BLE001 - fail safe, record a failed execution
             logger.exception("executor failed", extra={"proposal_id": proposal.id})
             result = ExecutionResult(
                 status=ExecutionStatus.FAILED, error_code="EXECUTOR_ERROR"
             )
+        execution_ref = result.execution_ref
+        if execution_ref is not None:
+            execution_ref = execution_ref[:128]
+        error_code = result.error_code
+        if error_code is not None:
+            error_code = error_code[:64]
         execution = Execution(
             id=_new_id("EXEC"),
             proposal_id=proposal.id,
             status=result.status,
-            execution_ref=result.execution_ref,
-            error_code=result.error_code,
+            execution_ref=execution_ref,
+            error_code=error_code,
         )
         try:
             self.repo.create_execution(execution)
@@ -510,12 +588,12 @@ class Workflow:
             role=identity.role,
             event_type=event_type,
             outcome=result.status.value,
-            reason_codes=[result.error_code] if result.error_code else [],
+            reason_codes=[execution.error_code] if execution.error_code else [],
             payload={
                 "proposal_id": proposal.id,
                 "action": proposal.action.value,
-                "execution_ref": result.execution_ref,
-                "error_code": result.error_code,
+                "execution_ref": execution.execution_ref,
+                "error_code": execution.error_code,
             },
         )
         return execution

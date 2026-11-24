@@ -6,11 +6,13 @@ from payment_triage.models import (
     ApproveRequest,
     Case,
     CaseStatus,
+    CreateCaseRequest,
     ExceptionType,
     Payment,
     PaymentStatus,
     PolicyOutcome,
     Proposal,
+    ProposalDraft,
     utcnow_iso,
 )
 
@@ -93,3 +95,21 @@ def test_case_defaults_and_timestamp() -> None:
     )
     assert case.status is CaseStatus.OPEN
     assert utcnow_iso().endswith("Z")
+
+
+def test_create_case_request_rejects_client_assignee() -> None:
+    with pytest.raises(ValidationError):
+        CreateCaseRequest(
+            payment_id="P1",
+            exception_type=ExceptionType.FAILED_PAYMENT,
+            assignee="user:carol",
+        )
+
+
+def test_proposal_draft_amount_rules() -> None:
+    with pytest.raises(ValidationError):
+        ProposalDraft(payment_id="P1", action=Action.RETRY, rationale="x")
+    with pytest.raises(ValidationError):
+        ProposalDraft(
+            payment_id="P1", action=Action.HOLD, amount_cents=100, rationale="x"
+        )

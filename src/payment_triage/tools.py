@@ -69,6 +69,12 @@ class PolicyDoc(BaseModel):
     keywords: list[str] = Field(default_factory=list)
 
 
+def load_policy_docs(path: Path) -> list[PolicyDoc]:
+    """Load and validate policy documents; used at startup and by the gateway."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [PolicyDoc.model_validate(item) for item in data]
+
+
 @dataclass
 class ToolCall:
     name: str
@@ -90,10 +96,10 @@ class ToolGateway:
     """Allowlisted, schema-validated, read-only tool access for the planner."""
 
     def __init__(self, repo: Repository, policy_path: Path, max_calls: int = 8) -> None:
-        self.repo = repo
+        self._repo = repo
         self.max_calls = max_calls
         self.calls: list[ToolCall] = []
-        self._policies = self._load_policies(policy_path)
+        self._policies = load_policy_docs(policy_path)
         self._tools: dict[str, ToolSpec] = {}
         self._register_defaults()
 
@@ -127,21 +133,45 @@ class ToolGateway:
         self._tools[spec.name] = spec
 
     def call(self, name: str, args: dict[str, Any] | BaseModel) -> BaseModel:
-        spec = self._tools.get(name)
-        if spec is None or not spec.read_only:
-            raise ToolError("TOOL_NOT_ALLOWED", f"Tool {name!r} is not allowlisted")
         if len(self.calls) >= self.max_calls:
             raise ToolError(
                 "TOOL_CALL_LIMIT", f"Maximum tool calls ({self.max_calls}) exceeded"
             )
-        try:
-            validated = (
-                args
-                if isinstance(args, BaseModel)
-                else spec.args_model.model_validate(args)
+        spec = self._tools.get(name)
+        if spec is None or not spec.read_only:
+            self.calls.append(
+                ToolCall(
+                    name,
+                    _safe_args_hash(args),
+                    "TOOL_NOT_ALLOWED",
+                    f"Tool {name!r} is not allowlisted",
+                )
             )
+            raise ToolError("TOOL_NOT_ALLOWED", f"Tool {name!r} is not allowlisted")
+        try:
+            if isinstance(args, BaseModel):
+                if not isinstance(args, spec.args_model):
+                    raise ToolError(
+                        "INVALID_TOOL_ARGS", f"Invalid arguments for {name}"
+                    )
+                validated = spec.args_model.model_validate(args.model_dump())
+            else:
+                validated = spec.args_model.model_validate(args)
         except ValidationError as exc:
+            self.calls.append(
+                ToolCall(
+                    name,
+                    _safe_args_hash(args),
+                    "INVALID_TOOL_ARGS",
+                    f"Invalid arguments for {name}",
+                )
+            )
             raise ToolError("INVALID_TOOL_ARGS", f"Invalid arguments for {name}") from exc
+        except ToolError as exc:
+            self.calls.append(
+                ToolCall(name, _safe_args_hash(args), exc.code, exc.message)
+            )
+            raise
 
         args_hash = _hash_args(validated.model_dump(mode="json"))
         try:
@@ -157,13 +187,13 @@ class ToolGateway:
         return result
 
     def _payment_lookup(self, args: PaymentLookupArgs) -> PaymentLookupResult:
-        payment = self.repo.get_payment(args.payment_id)
+        payment = self._repo.get_payment(args.payment_id)
         if payment is None:
             raise ToolError("NOT_FOUND", f"Payment {args.payment_id} not found")
         return PaymentLookupResult(payment=payment)
 
     def _account_lookup(self, args: AccountLookupArgs) -> AccountLookupResult:
-        account = self.repo.get_account(args.account_id)
+        account = self._repo.get_account(args.account_id)
         if account is None:
             raise ToolError("NOT_FOUND", f"Account {args.account_id} not found")
         return AccountLookupResult(account=account)
@@ -179,12 +209,6 @@ class ToolGateway:
                 )
         matches.sort(key=lambda match: (-match.score, match.id))
         return PolicySearchResult(matches=matches[: args.limit])
-
-    @staticmethod
-    def _load_policies(path: Path) -> list[PolicyDoc]:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return [PolicyDoc.model_validate(item) for item in data]
-
 
 def _tokenize(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9_]+", text.lower()))
@@ -205,9 +229,20 @@ def _score(doc: PolicyDoc, tokens: set[str]) -> int:
     return score
 
 
-def _hash_args(args: dict[str, Any]) -> str:
+def _hash_args(args: Any) -> str:
     payload = json.dumps(args, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()[:16]
+
+
+def _safe_args_hash(args: Any) -> str:
+    try:
+        if isinstance(args, BaseModel):
+            payload = args.model_dump(mode="json")
+        else:
+            payload = args
+        return _hash_args(payload)
+    except Exception:  # noqa: BLE001 - hashing must never block validation
+        return ""
 
 
 def _summarize(result: BaseModel) -> str:

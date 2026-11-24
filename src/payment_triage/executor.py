@@ -16,8 +16,14 @@ class ExecutionResult:
 
 
 class Executor(Protocol):
-    def execute(self, proposal: Proposal, payment: Payment) -> ExecutionResult:
-        """Execute an approved proposal. Must be idempotent at the workflow layer."""
+    def execute(
+        self, proposal: Proposal, payment: Payment, idempotency_key: str
+    ) -> ExecutionResult:
+        """Execute an approved proposal.
+
+        The executor must be idempotent for ``idempotency_key`` (the proposal ID):
+        a retry after a failed database write must not double-execute the effect.
+        """
         ...
 
 
@@ -27,7 +33,11 @@ class MockPaymentExecutor:
     def __init__(self, mode: str = "mock") -> None:
         self.mode = mode
 
-    def execute(self, proposal: Proposal, payment: Payment) -> ExecutionResult:
+    def execute(
+        self, proposal: Proposal, payment: Payment, idempotency_key: str
+    ) -> ExecutionResult:
+        # The mock is pure; the key documents the production idempotency contract.
+        _ = idempotency_key
         if self.mode == "fail":
             return ExecutionResult(
                 status=ExecutionStatus.FAILED, error_code="MOCK_EXECUTOR_FAILURE"
