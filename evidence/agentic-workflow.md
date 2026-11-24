@@ -44,7 +44,8 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - A mutation check breaks a rule in a temporary copy and confirms tests fail.
 - Every code commit was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 100 with the UI/CORS tests. All passed.
 - The React UI is checked by a TypeScript + Vite build and a server-side smoke test; no browser automation.
-- A fresh-clone verification runs before submission.
+- A fresh public clone was verified end-to-end: verify, demo, UI build and UI smoke.
+- Mutation check: disabling the refund-cap rule in a temporary worktree made the policy test and golden eval fail as expected; the submitted history was unchanged.
 - Subagents (when used) produce drafts only; I review, run and accept or reject their output.
 
 ## Notes

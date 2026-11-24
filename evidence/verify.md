@@ -14,7 +14,7 @@
 - Golden eval: 30 cases; action 30/30, policy 30/30, status 30/30, reason codes 30/30; forbidden executions 0; idempotency replay pass; p95 triage latency ~1.8 ms.
 - Demo: auto retry EXECUTED; high-value retry approved → EXECUTED; duplicate refund approved → EXECUTED; dispute over cap ESCALATED; closed account ESCALATED; self-approval DENIED; duplicate approval IDEMPOTENT (1 execution).
 - React UI: `npm run build` pass; `npm audit` 0 vulnerabilities; `GET /ui/` smoke test 200; CORS preflight test pass.
-- Fresh clone: pending final packaging check.
+- Fresh public clone: `scripts/verify.py` pass (99 passed + 1 skipped without the UI build); demo pass; UI build pass; UI smoke pass after the build.
 
 ## Per-commit verification
 
@@ -33,6 +33,10 @@ Every code commit was checked out in an isolated worktree and its tests were run
 | current tree (UI, CORS) | 100 passed |
 
 The scaffold and docs commits contain no code or tests.
+
+## Mutation check
+
+In a temporary worktree, the refund-cap rule was disabled (`if draft.amount_cents > self.settings.refund_cap_cents` → `if False`). The policy test `test_refund_over_cap_rejected`, the eval-gate test and the golden eval (G-012, G-029) failed as expected; the main history was unchanged. (The UI smoke test also failed in the worktree because the built UI is intentionally untracked; that is not a mutation signal.)
 
 ## Test matrix
 
