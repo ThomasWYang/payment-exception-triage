@@ -139,18 +139,21 @@ def _decide(
                     f"Insufficient funds on {payment.id}; hold the payment and notify "
                     "the customer."
                 ),
+                reason_codes=["INSUFFICIENT_FUNDS"],
             )
         if payment.failure_code is FailureCode.ACCOUNT_CLOSED:
             return ProposalDraft(
                 payment_id=case.payment_id,
                 action=Action.ESCALATE,
                 rationale=f"Account {account.id} is closed; escalate to the account team.",
+                reason_codes=["ACCOUNT_CLOSED"],
             )
         if payment.failure_code is FailureCode.LIMIT_EXCEEDED:
             return ProposalDraft(
                 payment_id=case.payment_id,
                 action=Action.ESCALATE,
                 rationale=f"Payment {payment.id} exceeded a limit; escalate for review.",
+                reason_codes=["LIMIT_EXCEEDED"],
             )
         return _abstain(case, "Failure code is missing", "INSUFFICIENT_EVIDENCE")
 
