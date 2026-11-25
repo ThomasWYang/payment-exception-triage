@@ -20,7 +20,7 @@
 - Fresh public clone of the multi-role commit (`2cd1409`): `scripts/verify.py` pass (132 passed); demo pass (cross-approval, single-role approval, triage-requester denial); UI smoke and asset-serving pass.
 - Fresh public clone of the scalability commit (`afab0eb`): `scripts/verify.py` pass (134 passed); demo pass; UI smoke and asset-serving pass.
 - Fresh public clone of the seed-owner code commit (`0fdebb1`): `scripts/verify.py` pass (154 passed); demo pass; UI smoke and asset-serving pass.
-- GitHub Actions: green, including the code-review fix commit (`45396278122`), the UI-primary commit (`45588435963`), the multi-role commit (`45596239039`), the scalability commit (`45597660315`), the final review commit (`45601828828`) and the seed owner commit (`45606250931`; verify + UI jobs).
+- GitHub Actions: green, including the code-review fix commit (`45396278122`), the UI-primary commit (`45588435963`), the multi-role commit (`45596239039`), the scalability commit (`45597660315`), the final review commit (`45601828828`), the seed owner commit (`45606250931`; verify + UI jobs) and the final review hardening commit (`45610662032`; verify + UI jobs).
 
 ## UI/README restructure (2026-11-25)
 
@@ -32,7 +32,7 @@
 - The multi-role implementation is covered by config, model, repository, policy, workflow and API tests: role sets, active-role mismatch, Alice/Bob cross-approval, Carol's analyst-only denial, Dave's approver-only denial and the triage-requester denial. The seed spreads the ten cases across all four owners (Alice 1002/1005/1008, Bob 1004/1010, Carol 1001/1009, Dave 1003/1006/1007), and the seed test asserts the full owner map.
 - Fresh public clone of the multi-role commit (`2cd1409`): verify pass (132 passed); demo pass; UI smoke and asset-serving pass.
 - Fresh public clone of the seed-owner code commit (`0fdebb1`): verify pass (154 passed); demo pass; UI smoke and asset-serving pass.
-- GitHub Actions: green for the multi-role commit (`2cd1409`, run `45596239039`) and the seed-owner code commit (`0fdebb1`, run `45606250931`; verify + UI jobs).
+- GitHub Actions: green for the multi-role commit (`2cd1409`, run `45596239039`), the seed-owner code commit (`0fdebb1`, run `45606250931`; verify + UI jobs) and the final review hardening commit (`8cacccd`, run `45610662032`; verify + UI jobs).
 
 ## Code-review hardening
 
@@ -86,6 +86,7 @@ Every code commit from the original build was checked out in an isolated worktre
 | `afab0eb` audit pagination + event-type index | 134 passed (CI run `45597660315`) |
 | `4d48923` final review fixes, coverage expansion, demo in verify | 154 passed (CI run `45601828828`) |
 | `0fdebb1` seed owner matrix across all four humans | 154 passed (CI run `45606250931`) |
+| `8cacccd` final review hardening (157 tests) | 157 passed (CI run `45610662032`) |
 | current tree after the final review | 157 passed |
 
 The scaffold and docs commits contain no code or tests.
