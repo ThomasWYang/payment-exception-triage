@@ -24,6 +24,9 @@ from payment_triage.workflow import Workflow, WorkflowError
 AGENT = Identity("agent:triage-bot", frozenset({Role.AGENT}))
 BOB = Identity("user:bob", frozenset({Role.ANALYST, Role.APPROVER}))
 BOB_APPROVER = BOB.with_active_role(Role.APPROVER)
+ALICE = Identity("user:alice", frozenset({Role.ANALYST, Role.APPROVER}))
+ALICE_APPROVER = ALICE.with_active_role(Role.APPROVER)
+DAVE_APPROVER = Identity("user:dave", frozenset({Role.APPROVER}))
 
 
 def _pending_workflow(repo, settings, amount: int = 500000) -> Workflow:
@@ -69,6 +72,28 @@ def test_same_key_replays(repo, settings) -> None:
     assert "IDEMPOTENT_REPLAY" in events
 
 
+def test_denied_approval_does_not_consume_key(repo, settings) -> None:
+    wf = _pending_workflow(repo, settings)
+    request = ApproveRequest(decision="APPROVE", rationale="ok")
+    with pytest.raises(WorkflowError) as exc:
+        wf.approve("CASE-1", ALICE_APPROVER, request, "shared-key")
+    assert "SELF_APPROVAL_DENIED" in exc.value.message
+    result = wf.approve("CASE-1", BOB_APPROVER, request, "shared-key")
+    assert result.case.status is CaseStatus.EXECUTED
+    row = repo.conn.execute("SELECT COUNT(*) AS n FROM executions").fetchone()
+    assert row["n"] == 1
+
+
+def test_same_key_different_approver_conflicts(repo, settings) -> None:
+    wf = _pending_workflow(repo, settings)
+    request = ApproveRequest(decision="APPROVE", rationale="ok")
+    wf.approve("CASE-1", BOB_APPROVER, request, "key-1")
+    with pytest.raises(WorkflowError) as exc:
+        wf.approve("CASE-1", DAVE_APPROVER, request, "key-1")
+    assert exc.value.code == "IDEMPOTENCY_CONFLICT"
+    assert exc.value.http_status == 409
+
+
 def test_same_key_different_body_conflicts(repo, settings) -> None:
     wf = _pending_workflow(repo, settings)
     wf.approve(
@@ -106,6 +131,51 @@ def test_missing_key_rejected(repo, settings) -> None:
         )
     assert exc.value.code == "IDEMPOTENCY_KEY_REQUIRED"
     assert exc.value.http_status == 400
+
+
+def test_concurrent_different_keys_one_wins(repo, settings) -> None:
+    _pending_workflow(repo, settings)
+    request = ApproveRequest(decision="APPROVE", rationale="ok")
+    barrier = threading.Barrier(2)
+    results: list[object] = [None, None]
+    keys = ["different-key-1", "different-key-2"]
+
+    def call(index: int) -> None:
+        conn = connect(settings.database_path)
+        try:
+            local = Workflow(
+                repo=Repository(conn),
+                settings=settings,
+                planner=DeterministicPlanner(settings.refund_cap_cents),
+                policy=PolicyEngine(settings),
+                executor=MockPaymentExecutor("mock"),
+            )
+            barrier.wait()
+            try:
+                results[index] = local.approve(
+                    "CASE-1", BOB_APPROVER, request, keys[index]
+                )
+            except Exception as exc:  # noqa: BLE001 - captured for assertion
+                results[index] = exc
+        finally:
+            conn.close()
+
+    threads = [
+        threading.Thread(target=call, args=(index,)) for index in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    successes = [result for result in results if not isinstance(result, Exception)]
+    errors = [result for result in results if isinstance(result, Exception)]
+    assert len(successes) == 1, results
+    assert len(errors) == 1, results
+    assert isinstance(errors[0], WorkflowError)
+    assert errors[0].code in {"INVALID_STATE_TRANSITION", "ALREADY_APPROVED"}
+    row = repo.conn.execute("SELECT COUNT(*) AS n FROM executions").fetchone()
+    assert row["n"] == 1
 
 
 def test_concurrent_same_key_replays(repo, settings) -> None:

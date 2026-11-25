@@ -143,7 +143,10 @@ class PolicyEngine:
 
     def check_approver(self, case: Case, identity: Identity) -> list[str]:
         reasons: list[str] = []
-        if Role.APPROVER not in identity.roles:
+        if (
+            Role.APPROVER not in identity.roles
+            or identity.acting_role is not Role.APPROVER
+        ):
             reasons.append("ROLE_NOT_PERMITTED")
         if identity.actor == case.assignee:
             reasons.append("SELF_APPROVAL_DENIED")

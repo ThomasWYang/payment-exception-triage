@@ -136,6 +136,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
     # Additive migration for databases created before triage_requested_by.
     columns = {row[1] for row in conn.execute("PRAGMA table_info(cases)")}
     if "triage_requested_by" not in columns:
-        conn.execute("ALTER TABLE cases ADD COLUMN triage_requested_by TEXT")
+        try:
+            conn.execute("ALTER TABLE cases ADD COLUMN triage_requested_by TEXT")
+        except sqlite3.OperationalError as exc:
+            # Another worker may have won the startup migration race.
+            if "duplicate column name" not in str(exc).lower():
+                raise
     conn.executescript(AUDIT_TRIGGERS)
     conn.execute("PRAGMA user_version = 3")

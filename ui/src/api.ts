@@ -187,7 +187,12 @@ export function triageCase(
   caseId: string,
   identity: DemoIdentity,
 ): Promise<unknown> {
-  return request(`/v1/cases/${caseId}/triage`, identity, { method: "POST" });
+  // Send a body so the browser always sets Content-Length; the API
+  // requires it for POST requests and the triage endpoint ignores it.
+  return request(`/v1/cases/${caseId}/triage`, identity, {
+    method: "POST",
+    body: "{}",
+  });
 }
 
 export function approveCase(

@@ -1,4 +1,4 @@
-"""Run the same checks expected in CI: lint, tests and golden eval."""
+"""Run the same checks expected in CI: lint, tests, golden eval and demo."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ def main() -> int:
         ("ruff", [sys.executable, "-m", "ruff", "check", "."]),
         ("pytest", [sys.executable, "-m", "pytest", "-q"]),
         ("golden eval", [sys.executable, str(ROOT / "scripts" / "eval.py")]),
+        ("demo", [sys.executable, str(ROOT / "scripts" / "demo.py")]),
     ]
     failures: list[str] = []
     for name, command in commands:
@@ -25,7 +26,7 @@ def main() -> int:
     if failures:
         print("FAILED: " + ", ".join(failures), flush=True)
         return 1
-    print("PASS: lint, tests and golden eval", flush=True)
+    print("PASS: lint, tests, golden eval and demo", flush=True)
     return 0
 
 

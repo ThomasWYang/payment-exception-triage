@@ -6,6 +6,8 @@ from payment_triage.models import (
     Account,
     AccountStatus,
     Action,
+    Approval,
+    ApprovalDecision,
     ApproveRequest,
     Case,
     CaseStatus,
@@ -14,6 +16,7 @@ from payment_triage.models import (
     Payment,
     PaymentStatus,
     PolicyOutcome,
+    Proposal,
     ProposalDraft,
     Role,
 )
@@ -101,6 +104,7 @@ def test_high_value_retry_pending_then_approve(repo, settings) -> None:
     wf = _workflow(repo, settings)
     triage = wf.triage("CASE-1", AGENT)
     assert triage.case.status is CaseStatus.PENDING_APPROVAL
+    assert triage.case.triage_requested_by == "agent:triage-bot"
     assert triage.policy.requires_approval is True
     result = wf.approve(
         "CASE-1",
@@ -148,6 +152,7 @@ def test_dispute_over_cap_escalates(repo, settings) -> None:
     wf = _workflow(repo, settings)
     result = wf.triage("CASE-1", AGENT)
     assert result.case.status is CaseStatus.ESCALATED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert result.execution is None
     assert "AMOUNT_EXCEEDS_LIMIT" in result.policy.reason_codes
 
@@ -175,6 +180,7 @@ def test_policy_violation_rejected(repo, settings) -> None:
     wf = _workflow(repo, settings, planner=BadPlanner())
     result = wf.triage("CASE-1", AGENT)
     assert result.case.status is CaseStatus.REJECTED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert "ACTION_NOT_ALLOWED_FOR_EXCEPTION_TYPE" in result.policy.reason_codes
     assert "PAYMENT_NOT_SETTLED" in result.policy.reason_codes
 
@@ -187,6 +193,83 @@ def test_triage_twice_conflicts(repo, settings) -> None:
         wf.triage("CASE-1", AGENT)
     assert exc.value.code == "INVALID_STATE_TRANSITION"
     assert exc.value.http_status == 409
+    assert (
+        wf.get_case_view("CASE-1").case.triage_requested_by
+        == "agent:triage-bot"
+    )
+
+
+def test_pre_existing_proposal_rolls_back_requester(repo, settings) -> None:
+    _seed_case(repo, payment=_payment())
+    repo.create_proposal(
+        Proposal(
+            id="PROP-OLD",
+            case_id="CASE-1",
+            action=Action.RETRY,
+            amount_cents=25000,
+            rationale="existing proposal",
+            planner_version="v1",
+            policy_outcome=PolicyOutcome.AUTO_APPROVED,
+            requires_approval=False,
+        )
+    )
+    wf = _workflow(repo, settings)
+    with pytest.raises(WorkflowError) as exc:
+        wf.triage("CASE-1", AGENT)
+    assert exc.value.code == "INVALID_STATE_TRANSITION"
+    view = wf.get_case_view("CASE-1")
+    assert view.case.status is CaseStatus.OPEN
+    assert view.case.triage_requested_by is None
+
+
+def test_approve_pending_without_proposal(repo, settings) -> None:
+    _seed_case(repo, payment=_payment(amount=500000))
+    repo.update_case_status("CASE-1", CaseStatus.OPEN, CaseStatus.PENDING_APPROVAL)
+    wf = _workflow(repo, settings)
+    with pytest.raises(WorkflowError) as exc:
+        wf.approve(
+            "CASE-1",
+            BOB_APPROVER,
+            ApproveRequest(decision="APPROVE", rationale="missing"),
+            "key-no-proposal",
+        )
+    assert exc.value.code == "PROPOSAL_NOT_FOUND"
+
+
+def test_approve_already_approved(repo, settings) -> None:
+    _seed_case(repo, payment=_payment(amount=500000))
+    repo.create_proposal(
+        Proposal(
+            id="PROP-1",
+            case_id="CASE-1",
+            action=Action.RETRY,
+            amount_cents=500000,
+            rationale="pending proposal",
+            planner_version="v1",
+            policy_outcome=PolicyOutcome.PENDING_APPROVAL,
+            requires_approval=True,
+        )
+    )
+    repo.update_case_status("CASE-1", CaseStatus.OPEN, CaseStatus.PENDING_APPROVAL)
+    repo.create_approval(
+        Approval(
+            id="APPR-OLD",
+            case_id="CASE-1",
+            proposal_id="PROP-1",
+            decision=ApprovalDecision.APPROVE,
+            approver="user:bob",
+            rationale_redacted="existing",
+        )
+    )
+    wf = _workflow(repo, settings)
+    with pytest.raises(WorkflowError) as exc:
+        wf.approve(
+            "CASE-1",
+            BOB_APPROVER,
+            ApproveRequest(decision="APPROVE", rationale="again"),
+            "key-already-approved",
+        )
+    assert exc.value.code == "ALREADY_APPROVED"
 
 
 def test_triage_missing_case(repo, settings) -> None:
@@ -225,6 +308,30 @@ def test_self_approval_denied(repo, settings) -> None:
             "key-1",
         )
     assert "SELF_APPROVAL_DENIED" in exc.value.message
+    view = wf.get_case_view("CASE-1")
+    assert view.case.status is CaseStatus.PENDING_APPROVAL
+    assert view.approval is None
+    assert view.execution is None
+    denied = [
+        event
+        for event in wf.get_audit("CASE-1")
+        if event.event_type.value == "APPROVAL_DENIED"
+    ]
+    assert denied and "SELF_APPROVAL_DENIED" in denied[0].reason_codes
+
+
+def test_non_approver_active_role_cannot_approve(repo, settings) -> None:
+    _seed_case(repo, payment=_payment(amount=500000))
+    wf = _workflow(repo, settings)
+    wf.triage("CASE-1", AGENT)
+    with pytest.raises(WorkflowError) as exc:
+        wf.approve(
+            "CASE-1",
+            ALICE_ANALYST,
+            ApproveRequest(decision="APPROVE", rationale="wrong active role"),
+            "key-active-role",
+        )
+    assert "ROLE_NOT_PERMITTED" in exc.value.message
 
 
 def test_triage_records_the_human_requester(repo, settings) -> None:

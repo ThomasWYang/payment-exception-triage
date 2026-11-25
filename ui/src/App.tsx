@@ -49,13 +49,13 @@ const SAMPLE_CASES = [
     id: "CASE-1004",
     scenario: "Account closed",
     amount: "$900",
-    expected: "ESCALATE",
+    expected: "ESCALATED",
   },
   {
     id: "CASE-1005",
     scenario: "Limit exceeded",
     amount: "$3,000",
-    expected: "ESCALATE",
+    expected: "ESCALATED",
   },
   {
     id: "CASE-1006",
@@ -73,7 +73,7 @@ const SAMPLE_CASES = [
     id: "CASE-1008",
     scenario: "Customer dispute over the cap",
     amount: "$20,000",
-    expected: "ESCALATE",
+    expected: "ESCALATED",
   },
   {
     id: "CASE-1009",
@@ -112,6 +112,21 @@ function formatMoney(cents: number | null): string {
   }).format(cents / 100);
 }
 
+function policyLabel(outcome: string): string {
+  switch (outcome) {
+    case "AUTO_APPROVED":
+      return "auto-approved";
+    case "PENDING_APPROVAL":
+      return "requires approval";
+    case "REJECTED":
+      return "rejected by policy";
+    case "ESCALATED":
+      return "escalated";
+    default:
+      return outcome.toLowerCase();
+  }
+}
+
 function formatError(err: unknown): string {
   if (err instanceof ApiError) {
     const reasons = Array.isArray(err.details.reason_codes)
@@ -126,6 +141,7 @@ export default function App() {
   const [actor, setActor] = useState<ActorKey>("alice");
   const [activeRole, setActiveRole] = useState<ActingRole>("ANALYST");
   const [cases, setCases] = useState<CaseView[]>([]);
+  const [caseLimit, setCaseLimit] = useState(50);
   const [status, setStatus] = useState<ServiceStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -158,6 +174,7 @@ export default function App() {
         getStatus(),
       ]);
       setCases(caseList.items);
+      setCaseLimit(caseList.limit);
       setStatus(serviceStatus);
     } catch (err) {
       setError(formatError(err));
@@ -584,6 +601,12 @@ export default function App() {
             )}
           </tbody>
         </table>
+        {cases.length >= caseLimit && (
+          <p className="pager-note">
+            Showing the first {caseLimit} cases. Use the API with offset to page
+            further.
+          </p>
+        )}
       </main>
 
       {details && (
@@ -600,6 +623,7 @@ export default function App() {
           rationale={rationale}
           setRationale={setRationale}
           busy={busy}
+          error={error}
           onCancel={() => setPending(null)}
           onConfirm={() => void confirmApproval()}
         />
@@ -662,10 +686,8 @@ function DetailsModal({
           <div className="detail-section">
             <h3>Why this proposal</h3>
             <p>
-              <strong>{proposal.policy_outcome}</strong>
-              {proposal.requires_approval
-                ? " · requires approval"
-                : " · auto-approved"}
+              <strong>{proposal.policy_outcome}</strong> ·{" "}
+              {policyLabel(proposal.policy_outcome)}
             </p>
             <p>{proposal.rationale}</p>
             <p className="muted">
@@ -724,6 +746,7 @@ function ApprovalModal({
   rationale,
   setRationale,
   busy,
+  error,
   onCancel,
   onConfirm,
 }: {
@@ -731,6 +754,7 @@ function ApprovalModal({
   rationale: string;
   setRationale: (value: string) => void;
   busy: string | null;
+  error: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -741,6 +765,11 @@ function ApprovalModal({
           {pending.decision === "APPROVE" ? "Approve" : "Reject"}{" "}
           {pending.caseId}
         </h2>
+        {error && (
+          <div className="error" role="alert">
+            <strong>{error}</strong>
+          </div>
+        )}
         <label className="field">
           <span>Rationale</span>
           <textarea
@@ -782,7 +811,7 @@ function AuditModal({
               <span className="mono">{event.event_type}</span>
               <span>{event.outcome}</span>
               <span className="muted">
-                {event.actor} · {event.created_at}
+                {event.actor} ({event.actor_role}) · {event.created_at}
               </span>
               {event.reason_codes.length > 0 && (
                 <span className="reasons">

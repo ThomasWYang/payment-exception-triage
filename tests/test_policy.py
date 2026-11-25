@@ -249,8 +249,16 @@ def test_approver_checks(settings) -> None:
     bob = Identity("user:bob", frozenset({Role.APPROVER}))
     bob_analyst = Identity("user:bob", frozenset({Role.ANALYST}))
     alice_approver = Identity("user:alice", frozenset({Role.APPROVER}))
+    alice_multi_analyst = Identity(
+        "user:alice",
+        frozenset({Role.ANALYST, Role.APPROVER}),
+        active_role=Role.ANALYST,
+    )
     assert engine.check_approver(case, bob) == []
     assert "ROLE_NOT_PERMITTED" in engine.check_approver(case, bob_analyst)
+    assert "ROLE_NOT_PERMITTED" in engine.check_approver(
+        case, alice_multi_analyst
+    )
     assert "SELF_APPROVAL_DENIED" in engine.check_approver(case, alice_approver)
 
 

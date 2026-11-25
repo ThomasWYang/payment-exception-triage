@@ -1,6 +1,6 @@
 import pytest
 
-from payment_triage.config import ConfigError, load_settings
+from payment_triage.config import ConfigError, Identity, load_settings
 from payment_triage.models import Role
 
 
@@ -89,3 +89,23 @@ def test_identity_supports_multiple_roles_and_an_active_role() -> None:
     assert approver.actor == "user:alice"
     with pytest.raises(ConfigError):
         alice.with_active_role(Role.AGENT)
+
+
+def test_identity_rejects_empty_roles_and_an_unheld_active_role() -> None:
+    with pytest.raises(ConfigError):
+        Identity("user:x", frozenset())
+    with pytest.raises(ConfigError):
+        Identity(
+            "user:x",
+            frozenset({Role.ANALYST}),
+            active_role=Role.APPROVER,
+        )
+
+
+def test_api_key_override_replaces_the_identity_key() -> None:
+    settings = load_settings({"API_KEY_ALICE": "custom-alice"})
+    alice = settings.identity_for("custom-alice")
+    assert alice is not None
+    assert alice.actor == "user:alice"
+    assert alice.roles == frozenset({Role.ANALYST, Role.APPROVER})
+    assert settings.identity_for("alice-key") is None

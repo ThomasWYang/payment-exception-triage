@@ -94,6 +94,29 @@ class InvalidDraftPlanner:
         )
 
 
+class NonDraftPlanner:
+    version = "non-draft-v1"
+
+    def plan(self, case: Case, gateway: ToolGateway) -> object:
+        return {"action": "RETRY"}
+
+
+class LongRefExecutor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def execute(
+        self, proposal: Proposal, payment: Payment, idempotency_key: str
+    ) -> ExecutionResult:
+        _ = (proposal, payment, idempotency_key)
+        self.calls += 1
+        return ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            execution_ref="x" * 300,
+            error_code="y" * 100,
+        )
+
+
 class RecordingExecutor:
     def __init__(self) -> None:
         self.keys: list[str] = []
@@ -112,6 +135,7 @@ def test_planner_exception_escalates(repo, settings) -> None:
     wf = _workflow(repo, settings, planner=ExplodingPlanner())
     result = wf.triage("CASE-1", AGENT)
     assert result.case.status is CaseStatus.ESCALATED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert "PLANNER_ERROR" in result.policy.reason_codes
     assert result.execution is None
 
@@ -130,6 +154,7 @@ def test_planner_timeout_escalates(repo, settings) -> None:
     result = wf.triage("CASE-1", AGENT)
     elapsed = time.monotonic() - started
     assert result.case.status is CaseStatus.ESCALATED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert "PLANNER_TIMEOUT" in result.policy.reason_codes
     assert elapsed < 0.2
 
@@ -139,6 +164,16 @@ def test_invalid_planner_draft_escalates(repo, settings) -> None:
     wf = _workflow(repo, settings, planner=InvalidDraftPlanner())
     result = wf.triage("CASE-1", AGENT)
     assert result.case.status is CaseStatus.ESCALATED
+    assert result.case.triage_requested_by == "agent:triage-bot"
+    assert "PLANNER_ERROR" in result.policy.reason_codes
+
+
+def test_non_draft_planner_escalates(repo, settings) -> None:
+    _seed(repo)
+    wf = _workflow(repo, settings, planner=NonDraftPlanner())
+    result = wf.triage("CASE-1", AGENT)
+    assert result.case.status is CaseStatus.ESCALATED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert "PLANNER_ERROR" in result.policy.reason_codes
 
 
@@ -164,6 +199,7 @@ def test_missing_policy_path_escalates(repo, settings) -> None:
     wf = _workflow(repo, broken)
     result = wf.triage("CASE-1", AGENT)
     assert result.case.status is CaseStatus.ESCALATED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert "TOOL_INIT_ERROR" in result.policy.reason_codes
 
 
@@ -172,6 +208,7 @@ def test_executor_exception_marks_failed(repo, settings) -> None:
     wf = _workflow(repo, settings, executor=ExplodingExecutor())
     result = wf.triage("CASE-1", AGENT)
     assert result.case.status is CaseStatus.FAILED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert result.execution is not None
     assert result.execution.error_code == "EXECUTOR_ERROR"
 
@@ -181,5 +218,17 @@ def test_executor_failure_mode(repo, settings) -> None:
     wf = _workflow(repo, settings, executor=MockPaymentExecutor("fail"))
     result = wf.triage("CASE-1", AGENT)
     assert result.case.status is CaseStatus.FAILED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert result.execution is not None
     assert result.execution.error_code == "MOCK_EXECUTOR_FAILURE"
+
+
+def test_executor_output_truncated(repo, settings) -> None:
+    _seed(repo)
+    executor = LongRefExecutor()
+    wf = _workflow(repo, settings, executor=executor)
+    result = wf.triage("CASE-1", AGENT)
+    assert result.execution is not None
+    assert len(result.execution.execution_ref or "") == 128
+    assert len(result.execution.error_code or "") == 64
+    assert executor.calls == 1

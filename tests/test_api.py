@@ -103,11 +103,15 @@ def test_auth_required(client: TestClient) -> None:
 def test_role_matrix(client: TestClient, settings: Settings) -> None:
     _seed_payment(settings, amount=500000)
     case_id = _create_case(client, headers=CAROL_ANALYST)
-    # Dave is approver-only: he cannot request triage.
+    # Dave is approver-only: he cannot request triage, with or without an
+    # explicit active role.
     assert (
         client.post(f"/v1/cases/{case_id}/triage", headers=DAVE_APPROVER).status_code
         == 403
     )
+    dave_default = client.post(f"/v1/cases/{case_id}/triage", headers=DAVE)
+    assert dave_default.status_code == 403
+    assert dave_default.json()["error"]["code"] == "FORBIDDEN"
     # Carol is analyst-only: she can request triage.
     triage = client.post(f"/v1/cases/{case_id}/triage", headers=CAROL_ANALYST)
     assert triage.status_code == 200, triage.text
@@ -129,8 +133,17 @@ def test_role_matrix(client: TestClient, settings: Settings) -> None:
     )
     assert approved.status_code == 200, approved.text
     assert approved.json()["case"]["status"] == "EXECUTED"
-    # The agent service cannot read the case list; the humans can.
+    # The agent service cannot read case data; the humans can.
     assert client.get("/v1/cases", headers=AGENT).status_code == 403
+    assert client.get(f"/v1/cases/{case_id}", headers=AGENT).status_code == 403
+    assert (
+        client.get(f"/v1/cases/{case_id}/audit", headers=AGENT).status_code == 403
+    )
+    agent_role = client.get(
+        f"/v1/cases/{case_id}", headers={**AGENT, "X-Acting-Role": "AGENT"}
+    )
+    assert agent_role.status_code == 403
+    assert agent_role.json()["error"]["code"] == "ACTIVE_ROLE_MISMATCH"
     assert client.get("/v1/cases", headers=ALICE_ANALYST).status_code == 200
     assert client.get("/v1/cases", headers=BOB_APPROVER).status_code == 200
     assert client.get("/v1/cases", headers=CAROL_ANALYST).status_code == 200
@@ -142,9 +155,26 @@ def test_active_role_selection(client: TestClient, settings: Settings) -> None:
     payload = {"payment_id": "PAY-1", "exception_type": "FAILED_PAYMENT"}
     created = client.post("/v1/cases", json=payload, headers=ALICE_ANALYST)
     assert created.status_code == 201
+    case_id = created.json()["case"]["id"]
     mismatch = client.post("/v1/cases", json=payload, headers=ALICE_APPROVER)
     assert mismatch.status_code == 403
     assert mismatch.json()["error"]["code"] == "ACTIVE_ROLE_MISMATCH"
+    triage_mismatch = client.post(
+        f"/v1/cases/{case_id}/triage", json={}, headers=ALICE_APPROVER
+    )
+    assert triage_mismatch.status_code == 403
+    assert triage_mismatch.json()["error"]["code"] == "ACTIVE_ROLE_MISMATCH"
+    approve_mismatch = client.post(
+        f"/v1/cases/{case_id}/approve",
+        json={"decision": "APPROVE", "rationale": "wrong role"},
+        headers={**ALICE_ANALYST, "Idempotency-Key": "active-role-1"},
+    )
+    assert approve_mismatch.status_code == 403
+    assert approve_mismatch.json()["error"]["code"] == "ACTIVE_ROLE_MISMATCH"
+    normalized = client.get(
+        "/v1/cases", headers={**ALICE, "X-Acting-Role": " analyst "}
+    )
+    assert normalized.status_code == 200
     not_held = client.get("/v1/cases", headers={**ALICE, "X-Acting-Role": "AGENT"})
     assert not_held.status_code == 403
     assert not_held.json()["error"]["code"] == "FORBIDDEN"
@@ -155,10 +185,30 @@ def test_active_role_selection(client: TestClient, settings: Settings) -> None:
     assert invalid.json()["error"]["code"] == "INVALID_ACTING_ROLE"
 
 
+def test_default_active_role(client: TestClient, settings: Settings) -> None:
+    _seed_payment(settings, amount=500000)
+    # No X-Acting-Role: the service selects the first allowed role the
+    # identity holds (ANALYST on read/triage endpoints, APPROVER on the
+    # approve endpoint).
+    case_id = _create_case(client, headers=ALICE)
+    triage = client.post(f"/v1/cases/{case_id}/triage", json={}, headers=ALICE)
+    assert triage.status_code == 200, triage.text
+    assert triage.json()["case"]["triage_requested_by"] == "user:alice"
+    assert triage.json()["case"]["status"] == "PENDING_APPROVAL"
+    assert client.get("/v1/cases", headers=BOB).status_code == 200
+    approved = client.post(
+        f"/v1/cases/{case_id}/approve",
+        json={"decision": "APPROVE", "rationale": "default role"},
+        headers={**BOB, "Idempotency-Key": "default-role-1"},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["case"]["status"] == "EXECUTED"
+
+
 def test_agent_can_request_triage(client: TestClient, settings: Settings) -> None:
     _seed_payment(settings, amount=500000)
     case_id = _create_case(client)
-    triage = client.post(f"/v1/cases/{case_id}/triage", headers=AGENT)
+    triage = client.post(f"/v1/cases/{case_id}/triage", json={}, headers=AGENT)
     assert triage.status_code == 200, triage.text
     assert triage.json()["case"]["status"] == "PENDING_APPROVAL"
     assert triage.json()["case"]["triage_requested_by"] == "agent:triage-bot"
@@ -171,6 +221,15 @@ def test_multi_role_boundary(client: TestClient, settings: Settings) -> None:
     triage = client.post(f"/v1/cases/{bob_case}/triage", headers=BOB_ANALYST)
     assert triage.status_code == 200, triage.text
     assert triage.json()["case"]["triage_requested_by"] == "user:bob"
+    denied = client.post(
+        f"/v1/cases/{bob_case}/approve",
+        json={"decision": "APPROVE", "rationale": "mine"},
+        headers={**BOB_APPROVER, "Idempotency-Key": "cross-a-denied"},
+    )
+    assert denied.status_code == 403
+    reasons = denied.json()["error"]["details"]["reason_codes"]
+    assert "SELF_APPROVAL_DENIED" in reasons
+    assert "TRIAGE_REQUESTER_CANNOT_APPROVE" in reasons
     approved = client.post(
         f"/v1/cases/{bob_case}/approve",
         json={"decision": "APPROVE", "rationale": "independent review"},
@@ -277,6 +336,9 @@ def test_not_found(client: TestClient) -> None:
     response = client.get("/v1/cases/CASE-X", headers=ALICE_ANALYST)
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "CASE_NOT_FOUND"
+    audit = client.get("/v1/cases/CASE-X/audit", headers=ALICE_ANALYST)
+    assert audit.status_code == 404
+    assert audit.json()["error"]["code"] == "CASE_NOT_FOUND"
 
 
 def test_self_approval_api(client: TestClient, settings: Settings) -> None:
@@ -321,10 +383,178 @@ def test_audit_pagination(client: TestClient, settings: Settings) -> None:
     )
     assert second.status_code == 200
     assert second.json()["items"][0]["id"] != body["items"][0]["id"]
+    default = client.get(f"/v1/cases/{case_id}/audit", headers=ALICE_ANALYST)
+    assert default.status_code == 200
+    assert default.json()["limit"] == 500
+    assert default.json()["offset"] == 0
+    zero = client.get(f"/v1/cases/{case_id}/audit?limit=0", headers=ALICE_ANALYST)
+    assert zero.status_code == 422
+    negative = client.get(
+        f"/v1/cases/{case_id}/audit?offset=-1", headers=ALICE_ANALYST
+    )
+    assert negative.status_code == 422
+    max_page = client.get(
+        f"/v1/cases/{case_id}/audit?limit=1000", headers=ALICE_ANALYST
+    )
+    assert max_page.status_code == 200
+    assert max_page.json()["limit"] == 1000
+    past = client.get(
+        f"/v1/cases/{case_id}/audit?offset=9999", headers=ALICE_ANALYST
+    )
+    assert past.status_code == 200
+    assert past.json()["items"] == []
+    assert past.json()["offset"] == 9999
     too_large = client.get(
         f"/v1/cases/{case_id}/audit?limit=1001", headers=ALICE_ANALYST
     )
     assert too_large.status_code == 422
+
+
+def test_self_reject_denied(client: TestClient, settings: Settings) -> None:
+    _seed_payment(settings, amount=500000)
+    case_id = _create_case(client)
+    client.post(f"/v1/cases/{case_id}/triage", headers=ALICE_ANALYST)
+    response = client.post(
+        f"/v1/cases/{case_id}/approve",
+        json={"decision": "REJECT", "rationale": "mine"},
+        headers={**ALICE_APPROVER, "Idempotency-Key": "reject-1"},
+    )
+    assert response.status_code == 403
+    reasons = response.json()["error"]["details"]["reason_codes"]
+    assert "SELF_APPROVAL_DENIED" in reasons
+    assert "TRIAGE_REQUESTER_CANNOT_APPROVE" in reasons
+    case = client.get(f"/v1/cases/{case_id}", headers=ALICE_ANALYST)
+    assert case.json()["case"]["status"] == "PENDING_APPROVAL"
+
+
+def test_status_modes_and_counters(client: TestClient, settings: Settings) -> None:
+    _seed_payment(settings, amount=500000)
+    case_id = _create_case(client)
+    client.post(f"/v1/cases/{case_id}/triage", headers=ALICE_ANALYST)
+    client.post(
+        f"/v1/cases/{case_id}/approve",
+        json={"decision": "APPROVE", "rationale": "mine"},
+        headers={**ALICE_APPROVER, "Idempotency-Key": "status-denial"},
+    )
+    status = client.get("/status").json()
+    assert status["approval_denials"] == 1
+    assert status["mode"] == "normal"
+
+    degraded = load_settings(
+        {
+            "DATABASE_PATH": str(settings.database_path),
+            "POLICY_PATH": str(settings.policy_path),
+            "DEGRADED_MODE": "true",
+        }
+    )
+    with TestClient(create_app(degraded)) as local:
+        assert local.get("/status").json()["mode"] == "degraded"
+
+    disabled = load_settings(
+        {
+            "DATABASE_PATH": str(settings.database_path),
+            "POLICY_PATH": str(settings.policy_path),
+            "AUTO_APPROVE_ENABLED": "false",
+        }
+    )
+    with TestClient(create_app(disabled)) as local:
+        assert local.get("/status").json()["mode"] == "auto_approve_disabled"
+
+
+def test_unhandled_exception_envelope(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("payment_triage.api.Workflow.list_case_views", boom)
+    with TestClient(
+        create_app(settings), raise_server_exceptions=False
+    ) as local:
+        response = local.get(
+            "/v1/cases",
+            headers={**ALICE_ANALYST, "Origin": "http://localhost:5173"},
+        )
+    assert response.status_code == 500
+    body = response.json()["error"]
+    assert body["code"] == "INTERNAL_ERROR"
+    assert body["request_id"]
+    assert response.headers["X-Request-ID"]
+    assert (
+        response.headers["access-control-allow-origin"]
+        == "http://localhost:5173"
+    )
+
+
+def test_create_case_errors(client: TestClient, settings: Settings) -> None:
+    missing = client.post(
+        "/v1/cases",
+        json={"payment_id": "PAY-X", "exception_type": "FAILED_PAYMENT"},
+        headers=ALICE_ANALYST,
+    )
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "PAYMENT_NOT_FOUND"
+
+    _seed_payment(settings, amount=25000)
+    created = client.post(
+        "/v1/cases",
+        json={"payment_id": "PAY-1", "exception_type": "FAILED_PAYMENT"},
+        headers=ALICE_ANALYST,
+    )
+    assert created.status_code == 201
+    duplicate = client.post(
+        "/v1/cases",
+        json={"payment_id": "PAY-1", "exception_type": "FAILED_PAYMENT"},
+        headers=ALICE_ANALYST,
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "CASE_EXISTS"
+    mismatch = client.post(
+        "/v1/cases",
+        json={"payment_id": "PAY-1", "exception_type": "DUPLICATE_PAYMENT"},
+        headers=ALICE_ANALYST,
+    )
+    assert mismatch.status_code == 400
+    assert mismatch.json()["error"]["code"] == "EXCEPTION_TYPE_MISMATCH"
+    for query in ("limit=0", "limit=101", "status=BOGUS"):
+        response = client.get(f"/v1/cases?{query}", headers=ALICE_ANALYST)
+        assert response.status_code == 422
+    listed = client.get("/v1/cases?limit=1&offset=0", headers=ALICE_ANALYST)
+    assert listed.status_code == 200
+    assert listed.json()["limit"] == 1
+    assert listed.json()["offset"] == 0
+
+
+def test_api_ui_contract(client: TestClient, settings: Settings) -> None:
+    _seed_payment(settings, amount=500000)
+    case_id = _create_case(client)
+    triage = client.post(f"/v1/cases/{case_id}/triage", headers=ALICE_ANALYST)
+    body = triage.json()
+    assert body["case"]["triage_requested_by"] == "user:alice"
+    assert "evidence" in body["proposal"]
+    assert "requires_approval" in body["proposal"]
+    assert body["proposal"]["planner_version"]
+    approved = client.post(
+        f"/v1/cases/{case_id}/approve",
+        json={"decision": "APPROVE", "rationale": "contract"},
+        headers={**BOB_APPROVER, "Idempotency-Key": "contract-1"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["approval"]["rationale_redacted"]
+    audit = client.get(f"/v1/cases/{case_id}/audit", headers=ALICE_ANALYST).json()
+    assert {"items", "limit", "offset"} <= set(audit)
+    assert audit["items"][0]["actor_role"]
+    status = client.get("/status").json()
+    for key in (
+        "mode",
+        "auto_retry_limit_cents",
+        "refund_cap_cents",
+        "auto_approve_enabled",
+        "degraded_mode",
+    ):
+        assert key in status
+    listed = client.get("/v1/cases", headers=ALICE_ANALYST).json()
+    assert {"items", "limit", "offset"} <= set(listed)
 
 
 def test_cors_preflight(client: TestClient) -> None:
