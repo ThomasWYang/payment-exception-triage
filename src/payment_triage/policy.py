@@ -143,10 +143,12 @@ class PolicyEngine:
 
     def check_approver(self, case: Case, identity: Identity) -> list[str]:
         reasons: list[str] = []
-        if identity.role is not Role.APPROVER:
+        if Role.APPROVER not in identity.roles:
             reasons.append("ROLE_NOT_PERMITTED")
         if identity.actor == case.assignee:
             reasons.append("SELF_APPROVAL_DENIED")
+        if case.triage_requested_by is not None and identity.actor == case.triage_requested_by:
+            reasons.append("TRIAGE_REQUESTER_CANNOT_APPROVE")
         return reasons
 
 

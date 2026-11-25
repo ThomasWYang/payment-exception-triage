@@ -128,6 +128,7 @@ class Case(BaseModel):
     payment_id: str = Field(min_length=1, max_length=64)
     exception_type: ExceptionType
     assignee: str = Field(min_length=1, max_length=128)
+    triage_requested_by: str | None = Field(default=None, max_length=128)
     status: CaseStatus = CaseStatus.OPEN
     created_at: str = Field(default_factory=utcnow_iso)
     updated_at: str = Field(default_factory=utcnow_iso)

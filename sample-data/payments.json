@@ -79,5 +79,23 @@
     "failure_code": null,
     "duplicate_of": null,
     "account_id": "ACC-2002"
+  },
+  {
+    "id": "PAY-1009",
+    "amount_cents": 500000,
+    "currency": "AUD",
+    "status": "FAILED",
+    "failure_code": "TEMPORARY_ERROR",
+    "duplicate_of": null,
+    "account_id": "ACC-2002"
+  },
+  {
+    "id": "PAY-1010",
+    "amount_cents": 500000,
+    "currency": "AUD",
+    "status": "FAILED",
+    "failure_code": "TEMPORARY_ERROR",
+    "duplicate_of": null,
+    "account_id": "ACC-2001"
   }
 ]

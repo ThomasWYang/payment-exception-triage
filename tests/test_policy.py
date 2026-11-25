@@ -38,12 +38,14 @@ def _account(status: AccountStatus = AccountStatus.ACTIVE) -> Account:
 def _case(
     exception_type: ExceptionType = ExceptionType.FAILED_PAYMENT,
     assignee: str = "user:alice",
+    triage_requested_by: str | None = None,
 ) -> Case:
     return Case(
         id="CASE-1",
         payment_id="PAY-1",
         exception_type=exception_type,
         assignee=assignee,
+        triage_requested_by=triage_requested_by,
     )
 
 
@@ -244,10 +246,18 @@ def test_refund_on_closed_account_rejected(settings) -> None:
 def test_approver_checks(settings) -> None:
     engine = PolicyEngine(settings)
     case = _case()
-    assert engine.check_approver(case, Identity("user:bob", Role.APPROVER)) == []
-    assert "ROLE_NOT_PERMITTED" in engine.check_approver(
-        case, Identity("user:bob", Role.ANALYST)
-    )
-    assert "SELF_APPROVAL_DENIED" in engine.check_approver(
-        case, Identity("user:alice", Role.APPROVER)
-    )
+    bob = Identity("user:bob", frozenset({Role.APPROVER}))
+    bob_analyst = Identity("user:bob", frozenset({Role.ANALYST}))
+    alice_approver = Identity("user:alice", frozenset({Role.APPROVER}))
+    assert engine.check_approver(case, bob) == []
+    assert "ROLE_NOT_PERMITTED" in engine.check_approver(case, bob_analyst)
+    assert "SELF_APPROVAL_DENIED" in engine.check_approver(case, alice_approver)
+
+
+def test_triage_requester_cannot_approve(settings) -> None:
+    engine = PolicyEngine(settings)
+    case = _case(assignee="user:alice", triage_requested_by="user:carol")
+    carol_approver = Identity("user:carol", frozenset({Role.APPROVER}))
+    reasons = engine.check_approver(case, carol_approver)
+    assert "TRIAGE_REQUESTER_CANNOT_APPROVE" in reasons
+    assert "SELF_APPROVAL_DENIED" not in reasons

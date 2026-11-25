@@ -94,13 +94,15 @@ class Repository:
     def create_case(self, case: Case) -> None:
         self.conn.execute(
             """INSERT INTO cases
-               (id, payment_id, exception_type, assignee, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, payment_id, exception_type, assignee, triage_requested_by,
+                status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 case.id,
                 case.payment_id,
                 case.exception_type.value,
                 case.assignee,
+                case.triage_requested_by,
                 case.status.value,
                 case.created_at,
                 case.updated_at,
@@ -131,6 +133,12 @@ class Repository:
                 (status.value, limit, offset),
             ).fetchall()
         return [_case_from_row(row) for row in rows]
+
+    def set_triage_requested_by(self, case_id: str, actor: str) -> None:
+        self.conn.execute(
+            "UPDATE cases SET triage_requested_by = ?, updated_at = ? WHERE id = ?",
+            (actor, utcnow_iso(), case_id),
+        )
 
     def update_case_status(self, case_id: str, expected: CaseStatus, new: CaseStatus) -> bool:
         cursor = self.conn.execute(
@@ -301,6 +309,7 @@ def _case_from_row(row: sqlite3.Row) -> Case:
         payment_id=row["payment_id"],
         exception_type=row["exception_type"],
         assignee=row["assignee"],
+        triage_requested_by=row["triage_requested_by"],
         status=row["status"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],

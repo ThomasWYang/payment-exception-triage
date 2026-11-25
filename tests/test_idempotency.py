@@ -21,8 +21,9 @@ from payment_triage.policy import PolicyEngine
 from payment_triage.repository import Repository
 from payment_triage.workflow import Workflow, WorkflowError
 
-AGENT = Identity("agent:triage-bot", Role.AGENT)
-BOB = Identity("user:bob", Role.APPROVER)
+AGENT = Identity("agent:triage-bot", frozenset({Role.AGENT}))
+BOB = Identity("user:bob", frozenset({Role.ANALYST, Role.APPROVER}))
+BOB_APPROVER = BOB.with_active_role(Role.APPROVER)
 
 
 def _pending_workflow(repo, settings, amount: int = 500000) -> Workflow:
@@ -58,8 +59,8 @@ def _pending_workflow(repo, settings, amount: int = 500000) -> Workflow:
 def test_same_key_replays(repo, settings) -> None:
     wf = _pending_workflow(repo, settings)
     request = ApproveRequest(decision="APPROVE", rationale="ok")
-    first = wf.approve("CASE-1", BOB, request, "key-1")
-    second = wf.approve("CASE-1", BOB, request, "key-1")
+    first = wf.approve("CASE-1", BOB_APPROVER, request, "key-1")
+    second = wf.approve("CASE-1", BOB_APPROVER, request, "key-1")
     assert first.case.status is CaseStatus.EXECUTED
     assert second.case.status is CaseStatus.EXECUTED
     row = repo.conn.execute("SELECT COUNT(*) AS n FROM executions").fetchone()
@@ -71,12 +72,12 @@ def test_same_key_replays(repo, settings) -> None:
 def test_same_key_different_body_conflicts(repo, settings) -> None:
     wf = _pending_workflow(repo, settings)
     wf.approve(
-        "CASE-1", BOB, ApproveRequest(decision="APPROVE", rationale="ok"), "key-1"
+        "CASE-1", BOB_APPROVER, ApproveRequest(decision="APPROVE", rationale="ok"), "key-1"
     )
     with pytest.raises(WorkflowError) as exc:
         wf.approve(
             "CASE-1",
-            BOB,
+            BOB_APPROVER,
             ApproveRequest(decision="REJECT", rationale="changed"),
             "key-1",
         )
@@ -87,11 +88,11 @@ def test_same_key_different_body_conflicts(repo, settings) -> None:
 def test_different_key_after_execution_conflicts(repo, settings) -> None:
     wf = _pending_workflow(repo, settings)
     wf.approve(
-        "CASE-1", BOB, ApproveRequest(decision="APPROVE", rationale="ok"), "key-1"
+        "CASE-1", BOB_APPROVER, ApproveRequest(decision="APPROVE", rationale="ok"), "key-1"
     )
     with pytest.raises(WorkflowError) as exc:
         wf.approve(
-            "CASE-1", BOB, ApproveRequest(decision="APPROVE", rationale="ok"), "key-2"
+            "CASE-1", BOB_APPROVER, ApproveRequest(decision="APPROVE", rationale="ok"), "key-2"
         )
     assert exc.value.code == "INVALID_STATE_TRANSITION"
     assert exc.value.http_status == 409
@@ -101,7 +102,7 @@ def test_missing_key_rejected(repo, settings) -> None:
     wf = _pending_workflow(repo, settings)
     with pytest.raises(WorkflowError) as exc:
         wf.approve(
-            "CASE-1", BOB, ApproveRequest(decision="APPROVE", rationale="ok"), None
+            "CASE-1", BOB_APPROVER, ApproveRequest(decision="APPROVE", rationale="ok"), None
         )
     assert exc.value.code == "IDEMPOTENCY_KEY_REQUIRED"
     assert exc.value.http_status == 400
@@ -125,7 +126,7 @@ def test_concurrent_same_key_replays(repo, settings) -> None:
             )
             barrier.wait()
             try:
-                results[index] = local.approve("CASE-1", BOB, request, "same-key")
+                results[index] = local.approve("CASE-1", BOB_APPROVER, request, "same-key")
             except Exception as exc:  # noqa: BLE001 - captured for assertion
                 results[index] = exc
         finally:

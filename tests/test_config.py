@@ -10,11 +10,24 @@ def test_defaults_are_safe_and_synthetic() -> None:
     assert settings.auto_retry_limit_cents == 100_000
     assert settings.executor_mode == "mock"
     assert settings.effective_degraded is False
-    assert len(settings.api_keys) == 4
+    assert len(settings.api_keys) == 5
     assert "http://localhost:5173" in settings.cors_origins
     assert "http://localhost:8000" in settings.cors_origins
-    assert settings.identity_for("agent-key").role is Role.AGENT
-    assert settings.identity_for("approver-alice-key").actor == "user:alice"
+    agent = settings.identity_for("agent-key")
+    alice = settings.identity_for("alice-key")
+    bob = settings.identity_for("bob-key")
+    carol = settings.identity_for("carol-key")
+    dave = settings.identity_for("dave-key")
+    assert agent is not None and agent.roles == frozenset({Role.AGENT})
+    assert alice is not None and alice.roles == frozenset(
+        {Role.ANALYST, Role.APPROVER}
+    )
+    assert alice.acting_role is Role.ANALYST
+    assert bob is not None and bob.roles == frozenset(
+        {Role.ANALYST, Role.APPROVER}
+    )
+    assert carol is not None and carol.roles == frozenset({Role.ANALYST})
+    assert dave is not None and dave.roles == frozenset({Role.APPROVER})
     assert settings.identity_for("unknown") is None
     assert settings.identity_for(None) is None
 
@@ -57,10 +70,22 @@ def test_env_overrides() -> None:
         {"PLANNER_TIMEOUT_SECONDS": "0"},
         {"AUTO_APPROVE_ENABLED": "maybe"},
         {"API_KEY_AGENT": ""},
-        {"API_KEY_AGENT": "analyst-key"},
+        {"API_KEY_AGENT": "alice-key"},
         {"CORS_ORIGINS": ""},
     ],
 )
 def test_invalid_config_rejected(env: dict[str, str]) -> None:
     with pytest.raises(ConfigError):
         load_settings(env)
+
+
+def test_identity_supports_multiple_roles_and_an_active_role() -> None:
+    settings = load_settings({})
+    alice = settings.identity_for("alice-key")
+    assert alice is not None
+    approver = alice.with_active_role(Role.APPROVER)
+    assert approver.active_role is Role.APPROVER
+    assert approver.acting_role is Role.APPROVER
+    assert approver.actor == "user:alice"
+    with pytest.raises(ConfigError):
+        alice.with_active_role(Role.AGENT)

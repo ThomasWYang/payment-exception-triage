@@ -17,7 +17,27 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class Identity:
     actor: str
-    role: Role
+    roles: frozenset[Role]
+    active_role: Role | None = None
+
+    def __post_init__(self) -> None:
+        if not self.roles:
+            raise ConfigError("Identity must have at least one role")
+        object.__setattr__(self, "roles", frozenset(self.roles))
+        if self.active_role is not None and self.active_role not in self.roles:
+            raise ConfigError("active_role must be one of the identity's roles")
+
+    @property
+    def acting_role(self) -> Role:
+        """The role used for this action, for audit and policy context."""
+        if self.active_role is not None:
+            return self.active_role
+        return sorted(self.roles, key=lambda role: role.value)[0]
+
+    def with_active_role(self, role: Role) -> "Identity":
+        if role not in self.roles:
+            raise ConfigError(f"Role {role.value} is not held by {self.actor}")
+        return Identity(actor=self.actor, roles=self.roles, active_role=role)
 
 
 @dataclass(frozen=True)
@@ -90,19 +110,40 @@ def _env_float(
 
 def _parse_api_keys(env: Mapping[str, str]) -> dict[str, Identity]:
     configured = {
-        "API_KEY_AGENT": ("agent-key", "agent:triage-bot", Role.AGENT),
-        "API_KEY_ANALYST": ("analyst-key", "user:alice", Role.ANALYST),
-        "API_KEY_APPROVER": ("approver-key", "user:bob", Role.APPROVER),
-        "API_KEY_APPROVER_ALICE": ("approver-alice-key", "user:alice", Role.APPROVER),
+        "API_KEY_AGENT": (
+            "agent-key",
+            "agent:triage-bot",
+            frozenset({Role.AGENT}),
+        ),
+        "API_KEY_ALICE": (
+            "alice-key",
+            "user:alice",
+            frozenset({Role.ANALYST, Role.APPROVER}),
+        ),
+        "API_KEY_BOB": (
+            "bob-key",
+            "user:bob",
+            frozenset({Role.ANALYST, Role.APPROVER}),
+        ),
+        "API_KEY_CAROL": (
+            "carol-key",
+            "user:carol",
+            frozenset({Role.ANALYST}),
+        ),
+        "API_KEY_DAVE": (
+            "dave-key",
+            "user:dave",
+            frozenset({Role.APPROVER}),
+        ),
     }
     result: dict[str, Identity] = {}
-    for env_name, (default_key, actor, role) in configured.items():
+    for env_name, (default_key, actor, roles) in configured.items():
         key = env.get(env_name, default_key).strip()
         if not key:
             raise ConfigError(f"{env_name} must be non-empty")
         if key in result:
             raise ConfigError(f"Duplicate API key configured via {env_name}")
-        result[key] = Identity(actor=actor, role=role)
+        result[key] = Identity(actor=actor, roles=roles)
     return result
 
 

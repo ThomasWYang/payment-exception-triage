@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  API_KEYS,
+  ACTORS,
   ApiError,
   approveCase,
   getAudit,
@@ -8,25 +8,23 @@ import {
   listCases,
   newIdempotencyKey,
   triageCase,
+  type ActorKey,
+  type ActingRole,
   type AuditEvent,
   type CaseView,
-  type RoleKey,
+  type DemoIdentity,
   type ServiceStatus,
 } from "./api";
 
-const ROLE_LABELS: Record<RoleKey, string> = {
-  analyst: "Analyst Alice",
-  approver: "Approver Bob",
-  approverAlice: "Approver Alice (SoD test)",
-};
-
-const ROLE_HELP: Record<RoleKey, string> = {
-  analyst:
-    "Can view cases and audit trails, and run the agent's triage. Cannot approve.",
-  approver: "Can approve or reject pending actions. Cannot triage.",
-  approverAlice:
-    "Owns the seeded cases, so approving them is denied (separation of duties).",
-};
+function roleHelp(actor: ActorKey, role: ActingRole): string {
+  if (role === "ANALYST") {
+    return "Can view cases and audit trails, and request triage. Cannot approve.";
+  }
+  if (ACTORS[actor].roles.includes("ANALYST")) {
+    return "Can approve other people's cases; cannot approve a case they created or requested triage for.";
+  }
+  return "Can approve or reject pending actions. Cannot triage.";
+}
 
 const SAMPLE_CASES = [
   {
@@ -77,6 +75,18 @@ const SAMPLE_CASES = [
     amount: "$20,000",
     expected: "ESCALATE",
   },
+  {
+    id: "CASE-1009",
+    scenario: "Carol's case (analyst-only owner)",
+    amount: "$5,000",
+    expected: "RETRY pending → approve → EXECUTED",
+  },
+  {
+    id: "CASE-1010",
+    scenario: "Bob's case (dual-role owner)",
+    amount: "$5,000",
+    expected: "RETRY pending → approve → EXECUTED",
+  },
 ];
 
 type PendingApproval = {
@@ -113,7 +123,8 @@ function formatError(err: unknown): string {
 }
 
 export default function App() {
-  const [role, setRole] = useState<RoleKey>("analyst");
+  const [actor, setActor] = useState<ActorKey>("alice");
+  const [activeRole, setActiveRole] = useState<ActingRole>("ANALYST");
   const [cases, setCases] = useState<CaseView[]>([]);
   const [status, setStatus] = useState<ServiceStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -123,11 +134,27 @@ export default function App() {
   const [audit, setAudit] = useState<AuditState | null>(null);
   const [details, setDetails] = useState<DetailsState | null>(null);
 
+  const identity: DemoIdentity = {
+    key: ACTORS[actor].key,
+    actor: ACTORS[actor].actor,
+    role: activeRole,
+  };
+
+  function changeActor(next: ActorKey) {
+    setActor(next);
+    setActiveRole(ACTORS[next].roles[0] ?? "ANALYST");
+  }
+
   const refresh = useCallback(async () => {
+    const current: DemoIdentity = {
+      key: ACTORS[actor].key,
+      actor: ACTORS[actor].actor,
+      role: activeRole,
+    };
     try {
       setError(null);
       const [caseList, serviceStatus] = await Promise.all([
-        listCases(API_KEYS[role]),
+        listCases(current),
         getStatus(),
       ]);
       setCases(caseList.items);
@@ -135,7 +162,7 @@ export default function App() {
     } catch (err) {
       setError(formatError(err));
     }
-  }, [role]);
+  }, [actor, activeRole]);
 
   useEffect(() => {
     void refresh();
@@ -144,7 +171,7 @@ export default function App() {
   async function runTriage(caseId: string) {
     setBusy(caseId);
     try {
-      await triageCase(caseId);
+      await triageCase(caseId, identity);
       await refresh();
     } catch (err) {
       setError(formatError(err));
@@ -165,7 +192,7 @@ export default function App() {
     try {
       await approveCase(
         pending.caseId,
-        API_KEYS[role],
+        identity,
         pending.decision,
         rationale,
         pending.idempotencyKey,
@@ -181,7 +208,7 @@ export default function App() {
 
   async function openAudit(caseId: string) {
     try {
-      const result = await getAudit(caseId, API_KEYS[role]);
+      const result = await getAudit(caseId, identity);
       setAudit({ caseId, events: result.items });
     } catch (err) {
       setError(formatError(err));
@@ -210,14 +237,29 @@ export default function App() {
         </div>
         <div className="header-right">
           <label className="field">
-            <span>Acting as</span>
+            <span>User</span>
             <select
-              value={role}
-              onChange={(event) => setRole(event.target.value as RoleKey)}
+              value={actor}
+              onChange={(event) => changeActor(event.target.value as ActorKey)}
             >
-              {Object.entries(ROLE_LABELS).map(([key, label]) => (
+              {Object.entries(ACTORS).map(([key, item]) => (
                 <option key={key} value={key}>
-                  {label}
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Active role</span>
+            <select
+              value={activeRole}
+              onChange={(event) =>
+                setActiveRole(event.target.value as ActingRole)
+              }
+            >
+              {ACTORS[actor].roles.map((role) => (
+                <option key={role} value={role}>
+                  {role}
                 </option>
               ))}
             </select>
@@ -227,7 +269,10 @@ export default function App() {
           </button>
         </div>
       </header>
-      <p className="role-hint">{ROLE_HELP[role]}</p>
+      <p className="role-hint">
+        <strong>{ACTORS[actor].label}</strong> acting as{" "}
+        <strong>{activeRole}</strong>. {roleHelp(actor, activeRole)}
+      </p>
 
       <section className="intro card" aria-label="How it works">
         <div className="intro-step">
@@ -235,7 +280,7 @@ export default function App() {
           <div>
             <strong>Triage</strong>
             <p>
-              An OPEN case goes to the agent. It reads payment, account and
+              An analyst requests triage. The agent reads payment, account and
               policy evidence and proposes Retry, Hold, Escalate or Refund.
             </p>
           </div>
@@ -246,7 +291,8 @@ export default function App() {
             <strong>Decide</strong>
             <p>
               Low-risk retries execute automatically. Refunds and higher-risk
-              retries wait for an approver. The agent has no execute tool.
+              retries wait for a different human approver. The agent has no
+              execute tool.
             </p>
           </div>
         </div>
@@ -265,16 +311,32 @@ export default function App() {
       <details className="card guide" open>
         <summary>How to use this demo</summary>
         <p>
-          Start as <strong>Analyst Alice</strong> and click{" "}
-          <strong>Triage</strong> on an OPEN case. The Triage button runs the
-          agent service; the selected role controls viewing and approval.
-          Switch to <strong>Approver Bob</strong> to approve a pending action.
-          Use <strong>Details</strong> for the rationale and evidence, and{" "}
+          Choose a <strong>user</strong> and an <strong>active role</strong>.
+          Alice and Bob each hold both analyst and approver roles; Carol is
+          analyst-only; Dave is approver-only. Use <strong>Details</strong> for
+          the rationale, evidence and triage requester, and{" "}
           <strong>Audit</strong> for the trail.
         </p>
+        <p>
+          <strong>Carol (analyst)</strong> triage <code>CASE-1009</code> (Carol's
+          case); switch to <strong>Dave (approver)</strong> and approve it. Carol
+          has no approval actions; Dave has no Triage button.
+        </p>
+        <p>
+          <strong>Bob (analyst)</strong> triage <code>CASE-1010</code> (Bob's
+          case); switch to <strong>Alice (approver)</strong> and approve it.
+          Alice and Bob can approve each other's cases.
+        </p>
+        <p>
+          <strong>Alice (analyst)</strong> triage <code>CASE-1002</code>; switch
+          to <strong>Alice (approver)</strong> and try to approve: the service
+          denies it because she owns and requested the case. Switch to{" "}
+          <strong>Bob (approver)</strong> and approve it.
+        </p>
         <p className="hint">
-          Approver Alice is the assignee of the seeded cases. Try approving one
-          as her: the service denies it with <code>SELF_APPROVAL_DENIED</code>.
+          The analyst who requests triage cannot approve it. The service returns{" "}
+          <code>TRIAGE_REQUESTER_CANNOT_APPROVE</code> (and{" "}
+          <code>SELF_APPROVAL_DENIED</code> when they also own the case).
         </p>
       </details>
 
@@ -295,19 +357,24 @@ export default function App() {
               <td>Execute, write or approve</td>
             </tr>
             <tr>
-              <td>Analyst</td>
-              <td>View cases and audit trails; run triage</td>
+              <td>Alice (analyst + approver)</td>
+              <td>View; request triage; approve other people's cases</td>
+              <td>Approve a case she created or requested triage for</td>
+            </tr>
+            <tr>
+              <td>Bob (analyst + approver)</td>
+              <td>View; request triage; approve other people's cases</td>
+              <td>Approve a case he created or requested triage for</td>
+            </tr>
+            <tr>
+              <td>Carol (analyst)</td>
+              <td>View; request triage</td>
               <td>Approve</td>
             </tr>
             <tr>
-              <td>Approver</td>
-              <td>Approve or reject pending actions</td>
+              <td>Dave (approver)</td>
+              <td>View; approve or reject pending actions</td>
               <td>Triage</td>
-            </tr>
-            <tr>
-              <td>Approver Alice</td>
-              <td>Approve other people's cases</td>
-              <td>Approve her own seeded cases (SoD)</td>
             </tr>
           </tbody>
         </table>
@@ -338,7 +405,7 @@ export default function App() {
           </li>
           <li>
             <strong>Separation of duties:</strong> the approver must not be the
-            case assignee/creator.
+            case assignee/creator or the analyst who requested triage.
           </li>
           <li>
             <strong>One execution per proposal:</strong> duplicate approvals
@@ -464,17 +531,17 @@ export default function App() {
                     )}
                   </td>
                   <td className="actions">
-                    {item.status === "OPEN" && role === "analyst" && (
+                    {item.status === "OPEN" && activeRole === "ANALYST" && (
                       <button
                         onClick={() => void runTriage(item.id)}
                         disabled={busy === item.id}
-                        title="The agent gathers evidence and proposes; it cannot execute."
+                        title="The analyst requests triage; the agent gathers evidence and proposes; it cannot execute."
                       >
                         {busy === item.id ? "Triaging…" : "Triage"}
                       </button>
                     )}
                     {item.status === "PENDING_APPROVAL" &&
-                      (role === "approver" || role === "approverAlice") && (
+                      activeRole === "APPROVER" && (
                         <>
                           <button
                             onClick={() => openApproval(item.id, "APPROVE")}
@@ -576,6 +643,10 @@ function DetailsModal({
           <div>
             <span>Assignee</span>
             <strong className="mono">{item.assignee}</strong>
+          </div>
+          <div>
+            <span>Triage requested by</span>
+            <strong className="mono">{item.triage_requested_by ?? "—"}</strong>
           </div>
           <div>
             <span>Status</span>

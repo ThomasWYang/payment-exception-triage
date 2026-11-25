@@ -18,8 +18,10 @@ from payment_triage.workflow import Workflow
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "sample-data" / "golden_cases.jsonl"
-AGENT = Identity("agent:eval", Role.AGENT)
-APPROVER = Identity("user:bob", Role.APPROVER)
+AGENT = Identity("agent:eval", frozenset({Role.AGENT}))
+APPROVER = Identity(
+    "user:bob", frozenset({Role.ANALYST, Role.APPROVER})
+).with_active_role(Role.APPROVER)
 
 
 def _load_cases() -> list[dict]:

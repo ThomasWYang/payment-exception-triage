@@ -114,7 +114,7 @@ class Workflow:
                 self.repo,
                 case_id=case.id,
                 actor=identity.actor,
-                role=identity.role,
+                role=identity.acting_role,
                 event_type=AuditEventType.CASE_CREATED,
                 outcome="SUCCESS",
                 payload={
@@ -204,6 +204,7 @@ class Workflow:
                 raise WorkflowError(
                     "INVALID_STATE_TRANSITION", "Case is no longer open", 409
                 )
+            self.repo.set_triage_requested_by(case.id, identity.actor)
             try:
                 self.repo.create_proposal(proposal)
             except sqlite3.IntegrityError as exc:
@@ -214,7 +215,7 @@ class Workflow:
                 self.repo,
                 case_id=case.id,
                 actor=identity.actor,
-                role=identity.role,
+                role=identity.acting_role,
                 event_type=AuditEventType.PROPOSAL_SUBMITTED,
                 outcome="SUCCESS",
                 reason_codes=decision.reason_codes,
@@ -223,6 +224,7 @@ class Workflow:
                     "action": proposal.action.value,
                     "amount_cents": proposal.amount_cents,
                     "policy_outcome": decision.outcome.value,
+                    "triage_requested_by": identity.actor,
                 },
             )
             execution: Execution | None = None
@@ -232,7 +234,7 @@ class Workflow:
                     self.repo,
                     case_id=case.id,
                     actor=identity.actor,
-                    role=identity.role,
+                    role=identity.acting_role,
                     event_type=AuditEventType.POLICY_REJECTED,
                     outcome="REJECTED",
                     reason_codes=decision.reason_codes,
@@ -244,7 +246,7 @@ class Workflow:
                     self.repo,
                     case_id=case.id,
                     actor=identity.actor,
-                    role=identity.role,
+                    role=identity.acting_role,
                     event_type=AuditEventType.ESCALATED,
                     outcome="ESCALATED",
                     reason_codes=decision.reason_codes,
@@ -256,7 +258,7 @@ class Workflow:
                     self.repo,
                     case_id=case.id,
                     actor=identity.actor,
-                    role=identity.role,
+                    role=identity.acting_role,
                     event_type=AuditEventType.APPROVAL_REQUESTED,
                     outcome="PENDING",
                     reason_codes=decision.reason_codes,
@@ -267,7 +269,7 @@ class Workflow:
                     self.repo,
                     case_id=case.id,
                     actor=identity.actor,
-                    role=identity.role,
+                    role=identity.acting_role,
                     event_type=AuditEventType.POLICY_APPROVED,
                     outcome="AUTO_APPROVED",
                     reason_codes=decision.reason_codes,
@@ -311,7 +313,7 @@ class Workflow:
                     self.repo,
                     case_id=case.id,
                     actor=identity.actor,
-                    role=identity.role,
+                    role=identity.acting_role,
                     event_type=AuditEventType.APPROVAL_DENIED,
                     outcome="DENIED",
                     reason_codes=violations,
@@ -345,7 +347,7 @@ class Workflow:
                     self.repo,
                     case_id=case.id,
                     actor=identity.actor,
-                    role=identity.role,
+                    role=identity.acting_role,
                     event_type=AuditEventType.IDEMPOTENT_REPLAY,
                     outcome="REPLAY",
                     payload={"idempotency_key": idempotency_key},
@@ -381,7 +383,7 @@ class Workflow:
                             self.repo,
                             case_id=case.id,
                             actor=identity.actor,
-                            role=identity.role,
+                            role=identity.acting_role,
                             event_type=AuditEventType.IDEMPOTENT_REPLAY,
                             outcome="REPLAY",
                             payload={"idempotency_key": idempotency_key},
@@ -407,7 +409,7 @@ class Workflow:
                         self.repo,
                         case_id=case.id,
                         actor=identity.actor,
-                        role=identity.role,
+                        role=identity.acting_role,
                         event_type=AuditEventType.REJECTED,
                         outcome="REJECTED",
                         reason_codes=["APPROVER_REJECTED"],
@@ -421,7 +423,7 @@ class Workflow:
                         self.repo,
                         case_id=case.id,
                         actor=identity.actor,
-                        role=identity.role,
+                        role=identity.acting_role,
                         event_type=AuditEventType.APPROVED,
                         outcome="APPROVED",
                         reason_codes=["APPROVER_APPROVED"],
@@ -585,7 +587,7 @@ class Workflow:
             self.repo,
             case_id=case.id,
             actor=identity.actor,
-            role=identity.role,
+            role=identity.acting_role,
             event_type=event_type,
             outcome=result.status.value,
             reason_codes=[execution.error_code] if execution.error_code else [],

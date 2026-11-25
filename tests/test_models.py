@@ -94,7 +94,19 @@ def test_case_defaults_and_timestamp() -> None:
         assignee="user:alice",
     )
     assert case.status is CaseStatus.OPEN
+    assert case.triage_requested_by is None
     assert utcnow_iso().endswith("Z")
+
+
+def test_case_records_triage_requester() -> None:
+    case = Case(
+        id="C1",
+        payment_id="P1",
+        exception_type=ExceptionType.FAILED_PAYMENT,
+        assignee="user:alice",
+        triage_requested_by="user:carol",
+    )
+    assert case.triage_requested_by == "user:carol"
 
 
 def test_create_case_request_rejects_client_assignee() -> None:

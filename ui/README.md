@@ -20,10 +20,11 @@ Open `http://127.0.0.1:8000/ui/`.
 
 The screen includes:
 
+- a user selector and an active-role selector (Alice and Bob hold analyst + approver; Carol is analyst-only; Dave is approver-only);
 - a three-step "how it works" guide;
 - roles and rules panels;
 - the sample cases and expected outcomes;
-- case details (rationale, evidence, approval, execution);
+- case details (rationale, evidence, triage requester, approval, execution);
 - the append-only audit trail.
 
 ## Develop

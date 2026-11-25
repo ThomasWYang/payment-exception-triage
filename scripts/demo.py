@@ -23,9 +23,14 @@ from payment_triage.repository import Repository
 from payment_triage.workflow import Workflow, WorkflowError
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENT = Identity("agent:triage-bot", Role.AGENT)
-APPROVER = Identity("user:bob", Role.APPROVER)
-ALICE_APPROVER = Identity("user:alice", Role.APPROVER)
+AGENT = Identity("agent:triage-bot", frozenset({Role.AGENT}))
+BOB = Identity("user:bob", frozenset({Role.ANALYST, Role.APPROVER}))
+APPROVER = BOB.with_active_role(Role.APPROVER)
+ALICE = Identity("user:alice", frozenset({Role.ANALYST, Role.APPROVER}))
+ALICE_ANALYST = ALICE.with_active_role(Role.ANALYST)
+ALICE_APPROVER = ALICE.with_active_role(Role.APPROVER)
+CAROL_ANALYST = Identity("user:carol", frozenset({Role.ANALYST}))
+DAVE_APPROVER = Identity("user:dave", frozenset({Role.APPROVER}))
 
 
 def _payment(
@@ -53,6 +58,7 @@ def _seed(
     *,
     account_status: AccountStatus = AccountStatus.ACTIVE,
     exception_type: ExceptionType = ExceptionType.FAILED_PAYMENT,
+    assignee: str = "user:alice",
 ) -> None:
     repo.create_account(Account(id=payment.account_id, status=account_status))
     repo.create_payment(payment)
@@ -61,7 +67,7 @@ def _seed(
             id=case_id,
             payment_id=payment.id,
             exception_type=exception_type,
-            assignee="user:alice",
+            assignee=assignee,
         )
     )
 
@@ -172,6 +178,73 @@ def main() -> int:
                 else "FAILED"
             )
             rows.append(("duplicate approval", outcome, f"executions={row['n']}"))
+
+            # Alice holds both roles; she can approve a case she did not
+            # create or request triage for.
+            _seed(
+                repo,
+                "CASE-D8",
+                _payment("PAY-D8", 500000),
+                assignee="user:carol",
+            )
+            workflow.triage("CASE-D8", CAROL_ANALYST)
+            result = workflow.approve(
+                "CASE-D8",
+                ALICE_APPROVER,
+                ApproveRequest(decision="APPROVE", rationale="independent review"),
+                "demo-key-8",
+            )
+            rows.append(
+                ("multi-role approval", result.case.status.value, "approved by user:alice")
+            )
+
+            # Dave is approver-only; he can approve a case he did not request.
+            _seed(
+                repo,
+                "CASE-D10",
+                _payment("PAY-D10", 500000),
+                assignee="user:carol",
+            )
+            workflow.triage("CASE-D10", CAROL_ANALYST)
+            result = workflow.approve(
+                "CASE-D10",
+                DAVE_APPROVER,
+                ApproveRequest(decision="APPROVE", rationale="independent review"),
+                "demo-key-10",
+            )
+            rows.append(
+                ("single-role approval", result.case.status.value, "approved by user:dave")
+            )
+
+            # Alice requested triage on Carol's case; Alice's approver role
+            # cannot then approve it, even though she is not the assignee.
+            _seed(
+                repo,
+                "CASE-D9",
+                _payment("PAY-D9", 500000),
+                assignee="user:carol",
+            )
+            workflow.triage("CASE-D9", ALICE_ANALYST)
+            try:
+                workflow.approve(
+                    "CASE-D9",
+                    ALICE_APPROVER,
+                    ApproveRequest(decision="APPROVE", rationale="mine"),
+                    "demo-key-9",
+                )
+                rows.append(("triage requester", "UNEXPECTED", "should have been denied"))
+            except WorkflowError as exc:
+                detail = ",".join(exc.reason_codes) or exc.code
+                rows.append(("triage requester", "DENIED", detail))
+            result = workflow.approve(
+                "CASE-D9",
+                APPROVER,
+                ApproveRequest(decision="APPROVE", rationale="independent review"),
+                "demo-key-9b",
+            )
+            rows.append(
+                ("independent approval", result.case.status.value, "approved by user:bob")
+            )
 
             print(f"{'Scenario':<24} {'Outcome':<14} Detail")
             print("-" * 70)

@@ -22,10 +22,14 @@ from payment_triage.policy import PolicyEngine
 from payment_triage.tools import ToolGateway
 from payment_triage.workflow import Workflow, WorkflowError
 
-AGENT = Identity("agent:triage-bot", Role.AGENT)
-BOB = Identity("user:bob", Role.APPROVER)
-ALICE_APPROVER = Identity("user:alice", Role.APPROVER)
-ALICE_ANALYST = Identity("user:alice", Role.ANALYST)
+AGENT = Identity("agent:triage-bot", frozenset({Role.AGENT}))
+BOB = Identity("user:bob", frozenset({Role.ANALYST, Role.APPROVER}))
+BOB_APPROVER = BOB.with_active_role(Role.APPROVER)
+ALICE = Identity("user:alice", frozenset({Role.ANALYST, Role.APPROVER}))
+ALICE_APPROVER = ALICE.with_active_role(Role.APPROVER)
+ALICE_ANALYST = ALICE.with_active_role(Role.ANALYST)
+CAROL_ANALYST = Identity("user:carol", frozenset({Role.ANALYST}))
+CAROL_APPROVER = Identity("user:carol", frozenset({Role.APPROVER}))
 
 
 def _payment(
@@ -82,6 +86,7 @@ def test_auto_retry_executes(repo, settings) -> None:
     wf = _workflow(repo, settings)
     result = wf.triage("CASE-1", AGENT)
     assert result.case.status is CaseStatus.EXECUTED
+    assert result.case.triage_requested_by == "agent:triage-bot"
     assert result.policy.outcome is PolicyOutcome.AUTO_APPROVED
     assert result.execution is not None
     assert result.execution.status.value == "SUCCEEDED"
@@ -99,7 +104,7 @@ def test_high_value_retry_pending_then_approve(repo, settings) -> None:
     assert triage.policy.requires_approval is True
     result = wf.approve(
         "CASE-1",
-        BOB,
+        BOB_APPROVER,
         ApproveRequest(decision="APPROVE", rationale="looks good"),
         "key-1",
     )
@@ -125,7 +130,7 @@ def test_refund_pending_then_approve(repo, settings) -> None:
     assert triage.case.status is CaseStatus.PENDING_APPROVAL
     result = wf.approve(
         "CASE-1",
-        BOB,
+        BOB_APPROVER,
         ApproveRequest(decision="APPROVE", rationale="duplicate confirmed"),
         "key-1",
     )
@@ -198,7 +203,7 @@ def test_approve_wrong_role_denied(repo, settings) -> None:
     with pytest.raises(WorkflowError) as exc:
         wf.approve(
             "CASE-1",
-            ALICE_ANALYST,
+            CAROL_ANALYST,
             ApproveRequest(decision="APPROVE", rationale="x"),
             "key-1",
         )
@@ -222,13 +227,43 @@ def test_self_approval_denied(repo, settings) -> None:
     assert "SELF_APPROVAL_DENIED" in exc.value.message
 
 
+def test_triage_records_the_human_requester(repo, settings) -> None:
+    _seed_case(repo, payment=_payment())
+    wf = _workflow(repo, settings)
+    result = wf.triage("CASE-1", ALICE_ANALYST)
+    assert result.case.triage_requested_by == "user:alice"
+    assert wf.get_case_view("CASE-1").case.triage_requested_by == "user:alice"
+
+
+def test_triage_requester_cannot_approve_even_if_not_the_assignee(repo, settings) -> None:
+    _seed_case(repo, payment=_payment(amount=500000), assignee="user:alice")
+    wf = _workflow(repo, settings)
+    wf.triage("CASE-1", CAROL_ANALYST)
+    with pytest.raises(WorkflowError) as exc:
+        wf.approve(
+            "CASE-1",
+            CAROL_APPROVER,
+            ApproveRequest(decision="APPROVE", rationale="x"),
+            "key-1",
+        )
+    assert "TRIAGE_REQUESTER_CANNOT_APPROVE" in exc.value.message
+    assert "SELF_APPROVAL_DENIED" not in exc.value.message
+    result = wf.approve(
+        "CASE-1",
+        BOB_APPROVER,
+        ApproveRequest(decision="APPROVE", rationale="independent"),
+        "key-2",
+    )
+    assert result.case.status is CaseStatus.EXECUTED
+
+
 def test_approve_wrong_state(repo, settings) -> None:
     _seed_case(repo, payment=_payment())
     wf = _workflow(repo, settings)
     with pytest.raises(WorkflowError) as exc:
         wf.approve(
             "CASE-1",
-            BOB,
+            BOB_APPROVER,
             ApproveRequest(decision="APPROVE", rationale="x"),
             "key-1",
         )
@@ -241,7 +276,7 @@ def test_approve_reject(repo, settings) -> None:
     wf.triage("CASE-1", AGENT)
     result = wf.approve(
         "CASE-1",
-        BOB,
+        BOB_APPROVER,
         ApproveRequest(decision="REJECT", rationale="not now"),
         "key-1",
     )

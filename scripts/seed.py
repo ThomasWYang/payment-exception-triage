@@ -32,7 +32,10 @@ CASE_TYPES = {
     "PAY-1006": ExceptionType.DUPLICATE_PAYMENT,
     "PAY-1007": ExceptionType.CUSTOMER_DISPUTE,
     "PAY-1008": ExceptionType.CUSTOMER_DISPUTE,
+    "PAY-1009": ExceptionType.FAILED_PAYMENT,
+    "PAY-1010": ExceptionType.FAILED_PAYMENT,
 }
+CASE_ASSIGNEES = {"PAY-1009": "user:carol", "PAY-1010": "user:bob"}
 
 
 def seed(database: Path, reset: bool = False) -> None:
@@ -71,7 +74,7 @@ def seed(database: Path, reset: bool = False) -> None:
                         id=case_id,
                         payment_id=raw["id"],
                         exception_type=exception_type,
-                        assignee="user:alice",
+                        assignee=CASE_ASSIGNEES.get(raw["id"], "user:alice"),
                     )
                 )
                 created = True

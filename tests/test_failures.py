@@ -21,7 +21,7 @@ from payment_triage.policy import PolicyEngine
 from payment_triage.tools import ToolGateway
 from payment_triage.workflow import Workflow
 
-AGENT = Identity("agent:triage-bot", Role.AGENT)
+AGENT = Identity("agent:triage-bot", frozenset({Role.AGENT}))
 
 
 def _seed(repo) -> Payment:

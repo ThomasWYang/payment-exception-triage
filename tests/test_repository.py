@@ -89,6 +89,7 @@ def test_case_roundtrip_and_unique_payment(repo) -> None:
     repo.create_case(_case())
     case = repo.get_case("CASE-1")
     assert case is not None and case.status is CaseStatus.OPEN
+    assert case.triage_requested_by is None
     assert repo.get_case_by_payment("PAY-1").id == "CASE-1"
     with pytest.raises(sqlite3.IntegrityError):
         repo.create_case(
@@ -119,6 +120,16 @@ def test_update_case_status_is_compare_and_set(repo) -> None:
     repo.create_case(_case())
     assert repo.update_case_status("CASE-1", CaseStatus.OPEN, CaseStatus.PENDING_APPROVAL) is True
     assert repo.update_case_status("CASE-1", CaseStatus.OPEN, CaseStatus.EXECUTED) is False
+
+
+def test_set_triage_requested_by(repo) -> None:
+    repo.create_account(_account())
+    repo.create_payment(_payment())
+    repo.create_case(_case())
+    repo.set_triage_requested_by("CASE-1", "user:carol")
+    case = repo.get_case("CASE-1")
+    assert case is not None
+    assert case.triage_requested_by == "user:carol"
 
 
 def test_proposal_and_execution_uniqueness(repo) -> None:

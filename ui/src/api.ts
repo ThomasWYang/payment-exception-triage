@@ -1,12 +1,46 @@
-export type RoleKey = "analyst" | "approver" | "approverAlice";
+export type ActingRole = "ANALYST" | "APPROVER";
+export type ActorKey = "alice" | "bob" | "carol" | "dave";
 
-export const API_KEYS: Record<RoleKey, string> = {
-  analyst: "analyst-key",
-  approver: "approver-key",
-  approverAlice: "approver-alice-key",
+export interface DemoIdentity {
+  key: string;
+  actor: string;
+  role: ActingRole;
+}
+
+export interface DemoActor {
+  key: string;
+  actor: string;
+  label: string;
+  roles: ActingRole[];
+}
+
+export const ACTORS: Record<ActorKey, DemoActor> = {
+  alice: {
+    key: "alice-key",
+    actor: "user:alice",
+    label: "Alice (analyst + approver)",
+    roles: ["ANALYST", "APPROVER"],
+  },
+  bob: {
+    key: "bob-key",
+    actor: "user:bob",
+    label: "Bob (analyst + approver)",
+    roles: ["ANALYST", "APPROVER"],
+  },
+  carol: {
+    key: "carol-key",
+    actor: "user:carol",
+    label: "Carol (analyst)",
+    roles: ["ANALYST"],
+  },
+  dave: {
+    key: "dave-key",
+    actor: "user:dave",
+    label: "Dave (approver)",
+    roles: ["APPROVER"],
+  },
 };
 
-const AGENT_KEY = "agent-key";
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 export interface CaseItem {
@@ -14,6 +48,7 @@ export interface CaseItem {
   payment_id: string;
   exception_type: string;
   assignee: string;
+  triage_requested_by: string | null;
   status: string;
 }
 
@@ -114,17 +149,18 @@ export class ApiError extends Error {
 
 async function request<T>(
   path: string,
-  apiKey: string,
+  identity: DemoIdentity | null,
   init: RequestInit & { headers?: Record<string, string> } = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": apiKey,
-      ...(init.headers ?? {}),
-    },
-  });
+  const headers: Record<string, string> = { ...(init.headers ?? {}) };
+  if (init.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (identity) {
+    headers["X-API-Key"] = identity.key;
+    headers["X-Acting-Role"] = identity.role;
+  }
+  const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!response.ok) {
     let body: ErrorEnvelope | null = null;
     try {
@@ -141,22 +177,25 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
-export function listCases(apiKey: string): Promise<CaseList> {
-  return request<CaseList>("/v1/cases", apiKey);
+export function listCases(identity: DemoIdentity): Promise<CaseList> {
+  return request<CaseList>("/v1/cases", identity);
 }
 
-export function triageCase(caseId: string): Promise<unknown> {
-  return request(`/v1/cases/${caseId}/triage`, AGENT_KEY, { method: "POST" });
+export function triageCase(
+  caseId: string,
+  identity: DemoIdentity,
+): Promise<unknown> {
+  return request(`/v1/cases/${caseId}/triage`, identity, { method: "POST" });
 }
 
 export function approveCase(
   caseId: string,
-  apiKey: string,
+  identity: DemoIdentity,
   decision: "APPROVE" | "REJECT",
   rationale: string,
   idempotencyKey: string,
 ): Promise<unknown> {
-  return request(`/v1/cases/${caseId}/approve`, apiKey, {
+  return request(`/v1/cases/${caseId}/approve`, identity, {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({ decision, rationale }),
@@ -167,10 +206,13 @@ export function newIdempotencyKey(): string {
   return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
 
-export function getAudit(caseId: string, apiKey: string): Promise<AuditList> {
-  return request<AuditList>(`/v1/cases/${caseId}/audit`, apiKey);
+export function getAudit(
+  caseId: string,
+  identity: DemoIdentity,
+): Promise<AuditList> {
+  return request<AuditList>(`/v1/cases/${caseId}/audit`, identity);
 }
 
 export function getStatus(): Promise<ServiceStatus> {
-  return request<ServiceStatus>("/status", "");
+  return request<ServiceStatus>("/status", null);
 }

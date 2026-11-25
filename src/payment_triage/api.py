@@ -251,19 +251,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ApiError("UNAUTHORIZED", "Missing or invalid API key", 401)
         return identity
 
-    def require_role(role: Role) -> Callable[[Identity], Identity]:
-        def dependency(identity: Identity = Depends(require_identity)) -> Identity:
-            if identity.role is not role:
-                raise ApiError("FORBIDDEN", f"Requires role {role.value}", 403)
-            return identity
+    def select_acting_role(
+        identity: Identity, raw: str | None, allowed: tuple[Role, ...]
+    ) -> Identity:
+        if raw is None or not raw.strip():
+            for role in allowed:
+                if role in identity.roles:
+                    return identity.with_active_role(role)
+            raise ApiError("FORBIDDEN", "Role not permitted", 403)
+        try:
+            selected = Role(raw.strip().upper())
+        except ValueError as exc:
+            raise ApiError("INVALID_ACTING_ROLE", "Unknown X-Acting-Role", 400) from exc
+        if selected not in identity.roles:
+            raise ApiError("FORBIDDEN", f"Role {selected.value} not held", 403)
+        if selected not in allowed:
+            raise ApiError(
+                "ACTIVE_ROLE_MISMATCH",
+                "Active role is not permitted for this endpoint",
+                403,
+            )
+        return identity.with_active_role(selected)
+
+    def require_role(role: Role) -> Callable[..., Identity]:
+        def dependency(
+            identity: Identity = Depends(require_identity),
+            acting_role: str | None = Header(default=None, alias="X-Acting-Role"),
+        ) -> Identity:
+            return select_acting_role(identity, acting_role, (role,))
 
         return dependency
 
-    def require_any_role(*roles: Role) -> Callable[[Identity], Identity]:
-        def dependency(identity: Identity = Depends(require_identity)) -> Identity:
-            if identity.role not in roles:
-                raise ApiError("FORBIDDEN", "Role not permitted", 403)
-            return identity
+    def require_any_role(*roles: Role) -> Callable[..., Identity]:
+        def dependency(
+            identity: Identity = Depends(require_identity),
+            acting_role: str | None = Header(default=None, alias="X-Acting-Role"),
+        ) -> Identity:
+            return select_acting_role(identity, acting_role, roles)
 
         return dependency
 
@@ -279,7 +303,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/cases/{case_id}/triage", response_model=TriageView)
     def triage(
         case_id: str,
-        identity: Identity = Depends(require_role(Role.AGENT)),
+        identity: Identity = Depends(require_any_role(Role.ANALYST, Role.AGENT)),
         workflow: Workflow = Depends(get_workflow),
     ) -> TriageView:
         return workflow.triage(case_id, identity)

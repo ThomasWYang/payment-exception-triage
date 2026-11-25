@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS cases (
         exception_type IN ('FAILED_PAYMENT', 'DUPLICATE_PAYMENT', 'CUSTOMER_DISPUTE')
     ),
     assignee TEXT NOT NULL,
+    triage_requested_by TEXT,
     status TEXT NOT NULL CHECK (
         status IN ('OPEN', 'PENDING_APPROVAL', 'EXECUTED', 'REJECTED', 'FAILED', 'ESCALATED')
     ),
@@ -131,5 +132,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    # Additive migration for databases created before triage_requested_by.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(cases)")}
+    if "triage_requested_by" not in columns:
+        conn.execute("ALTER TABLE cases ADD COLUMN triage_requested_by TEXT")
     conn.executescript(AUDIT_TRIGGERS)
-    conn.execute("PRAGMA user_version = 1")
+    conn.execute("PRAGMA user_version = 2")
