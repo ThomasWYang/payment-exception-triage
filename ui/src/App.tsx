@@ -21,8 +21,9 @@ const ROLE_LABELS: Record<RoleKey, string> = {
 };
 
 const ROLE_HELP: Record<RoleKey, string> = {
-  analyst: "Can view cases and audit trails. Cannot approve.",
-  approver: "Can approve or reject pending actions.",
+  analyst:
+    "Can view cases and audit trails, and run the agent's triage. Cannot approve.",
+  approver: "Can approve or reject pending actions. Cannot triage.",
   approverAlice:
     "Owns the seeded cases, so approving them is denied (separation of duties).",
 };
@@ -295,7 +296,7 @@ export default function App() {
             </tr>
             <tr>
               <td>Analyst</td>
-              <td>View cases and audit trails</td>
+              <td>View cases and audit trails; run triage</td>
               <td>Approve</td>
             </tr>
             <tr>
@@ -463,7 +464,7 @@ export default function App() {
                     )}
                   </td>
                   <td className="actions">
-                    {item.status === "OPEN" && (
+                    {item.status === "OPEN" && role === "analyst" && (
                       <button
                         onClick={() => void runTriage(item.id)}
                         disabled={busy === item.id}
