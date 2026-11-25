@@ -208,6 +208,8 @@ python scripts/verify.py
 
 Runs `ruff`, `pytest`, the 30-case golden eval and the end-to-end demo. The same command runs in GitHub Actions, together with a UI build job. The golden eval is a regression/acceptance gate, not a model-quality benchmark.
 
+At the time of writing: **154 tests pass**, the golden eval is **30/30** with zero forbidden executions, and GitHub Actions is green (verify + UI jobs).
+
 ```bash
 python scripts/demo.py
 ```
