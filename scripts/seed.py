@@ -35,7 +35,16 @@ CASE_TYPES = {
     "PAY-1009": ExceptionType.FAILED_PAYMENT,
     "PAY-1010": ExceptionType.FAILED_PAYMENT,
 }
-CASE_ASSIGNEES = {"PAY-1009": "user:carol", "PAY-1010": "user:bob"}
+CASE_ASSIGNEES = {
+    "PAY-1001": "user:carol",
+    "PAY-1003": "user:dave",
+    "PAY-1004": "user:bob",
+    "PAY-1006": "user:dave",
+    "PAY-1007": "user:dave",
+    "PAY-1008": "user:alice",
+    "PAY-1009": "user:carol",
+    "PAY-1010": "user:bob",
+}
 
 
 def seed(database: Path, reset: bool = False) -> None:

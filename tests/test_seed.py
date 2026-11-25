@@ -20,9 +20,19 @@ def test_seed_creates_ten_open_cases_with_expected_assignees(
     finally:
         conn.close()
 
-    by_id = {case.id: case for case in cases}
     assert len(cases) == 10
     assert created_events == 10
     assert all(case.status is CaseStatus.OPEN for case in cases)
-    assert by_id["CASE-1009"].assignee == "user:carol"
-    assert by_id["CASE-1010"].assignee == "user:bob"
+    expected_owners = {
+        "CASE-1001": "user:carol",
+        "CASE-1002": "user:alice",
+        "CASE-1003": "user:dave",
+        "CASE-1004": "user:bob",
+        "CASE-1005": "user:alice",
+        "CASE-1006": "user:dave",
+        "CASE-1007": "user:dave",
+        "CASE-1008": "user:alice",
+        "CASE-1009": "user:carol",
+        "CASE-1010": "user:bob",
+    }
+    assert {case.id: case.assignee for case in cases} == expected_owners

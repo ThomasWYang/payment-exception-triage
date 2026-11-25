@@ -77,17 +77,30 @@ const SAMPLE_CASES = [
   },
   {
     id: "CASE-1009",
-    scenario: "Carol's case (analyst-only owner)",
+    scenario: "Temporary error, above auto-retry limit",
     amount: "$5,000",
     expected: "RETRY pending → approve → EXECUTED",
   },
   {
     id: "CASE-1010",
-    scenario: "Bob's case (dual-role owner)",
+    scenario: "Temporary error, above auto-retry limit",
     amount: "$5,000",
     expected: "RETRY pending → approve → EXECUTED",
   },
 ];
+
+const CASE_OWNERS: Record<string, string> = {
+  "CASE-1001": "Carol",
+  "CASE-1002": "Alice",
+  "CASE-1003": "Dave",
+  "CASE-1004": "Bob",
+  "CASE-1005": "Alice",
+  "CASE-1006": "Dave",
+  "CASE-1007": "Dave",
+  "CASE-1008": "Alice",
+  "CASE-1009": "Carol",
+  "CASE-1010": "Bob",
+};
 
 type PendingApproval = {
   caseId: string;
@@ -331,7 +344,7 @@ export default function App() {
           Choose a <strong>user</strong> and an <strong>active role</strong>.
           Alice and Bob each hold both analyst and approver roles; Carol is
           analyst-only; Dave is approver-only. Use <strong>Details</strong> for
-          the rationale, evidence and triage requester, and{" "}
+          the rationale, evidence, assignee and triage requester, and{" "}
           <strong>Audit</strong> for the trail.
         </p>
         <p>
@@ -349,6 +362,14 @@ export default function App() {
           to <strong>Alice (approver)</strong> and try to approve: the service
           denies it because she owns and requested the case. Switch to{" "}
           <strong>Bob (approver)</strong> and approve it.
+        </p>
+        <p>
+          <strong>Carol (analyst)</strong> triage <code>CASE-1006</code> (Dave's
+          duplicate) and <code>CASE-1007</code> (Dave's dispute); switch to{" "}
+          <strong>Bob (approver)</strong> and approve both. Dave owns them but
+          cannot triage (approver-only) or approve them (assignee).{" "}
+          <strong>Bob (analyst)</strong> can triage <code>CASE-1003</code>{" "}
+          (Dave's case) to see a hold auto-execute.
         </p>
         <p className="hint">
           The analyst who requests triage cannot approve it. The service returns{" "}
@@ -449,6 +470,7 @@ export default function App() {
           <thead>
             <tr>
               <th>Case</th>
+              <th>Owner</th>
               <th>Scenario</th>
               <th>Amount</th>
               <th>Expected</th>
@@ -458,6 +480,7 @@ export default function App() {
             {SAMPLE_CASES.map((item) => (
               <tr key={item.id}>
                 <td className="mono">{item.id}</td>
+                <td>{CASE_OWNERS[item.id]}</td>
                 <td>{item.scenario}</td>
                 <td>{item.amount}</td>
                 <td>{item.expected}</td>
