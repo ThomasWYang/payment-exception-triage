@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -190,6 +191,18 @@ def test_ui_served_when_built(client: TestClient) -> None:
     response = client.get("/ui/")
     assert response.status_code == 200
     assert "Payment Exception Triage" in response.text
+
+
+@pytest.mark.skipif(not UI_DIST.is_dir(), reason="UI not built")
+def test_ui_assets_served_when_built(client: TestClient) -> None:
+    index = client.get("/ui/")
+    assert index.status_code == 200
+    assets = re.findall(r'(?:src|href)="(/ui/assets/[^"]+)"', index.text)
+    assert assets, "built UI should reference hashed assets"
+    for path in assets:
+        asset = client.get(path)
+        assert asset.status_code == 200, path
+        assert asset.content, path
 
 
 def test_idempotency_api(client: TestClient, settings: Settings) -> None:
