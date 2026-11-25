@@ -133,6 +133,19 @@ def test_missing_key_rejected(repo, settings) -> None:
     assert exc.value.http_status == 400
 
 
+def test_whitespace_key_rejected(repo, settings) -> None:
+    wf = _pending_workflow(repo, settings)
+    with pytest.raises(WorkflowError) as exc:
+        wf.approve(
+            "CASE-1",
+            BOB_APPROVER,
+            ApproveRequest(decision="APPROVE", rationale="ok"),
+            "   ",
+        )
+    assert exc.value.code == "IDEMPOTENCY_KEY_REQUIRED"
+    assert exc.value.http_status == 400
+
+
 def test_concurrent_different_keys_one_wins(repo, settings) -> None:
     _pending_workflow(repo, settings)
     request = ApproveRequest(decision="APPROVE", rationale="ok")

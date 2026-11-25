@@ -298,7 +298,8 @@ class Workflow:
         request: ApproveRequest,
         idempotency_key: str | None,
     ) -> ApprovalResult:
-        if not idempotency_key:
+        key = (idempotency_key or "").strip()
+        if not key:
             raise WorkflowError(
                 "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required", 400
             )
@@ -334,7 +335,7 @@ class Workflow:
                 "approver": identity.actor,
             }
         )
-        existing = self.repo.get_idempotency(idempotency_key)
+        existing = self.repo.get_idempotency(key)
         if existing is not None:
             if existing["request_hash"] != request_hash:
                 raise WorkflowError(
@@ -350,7 +351,7 @@ class Workflow:
                     role=identity.acting_role,
                     event_type=AuditEventType.IDEMPOTENT_REPLAY,
                     outcome="REPLAY",
-                    payload={"idempotency_key": idempotency_key},
+                    payload={"idempotency_key": key},
                 )
             return ApprovalResult.model_validate_json(str(existing["response_json"]))
 
@@ -377,7 +378,7 @@ class Workflow:
             with self.repo.transaction():
                 current = self.repo.get_case(case.id)
                 if current is None or current.status is not CaseStatus.PENDING_APPROVAL:
-                    replay = self.repo.get_idempotency(idempotency_key)
+                    replay = self.repo.get_idempotency(key)
                     if replay is not None and replay["request_hash"] == request_hash:
                         record_audit(
                             self.repo,
@@ -386,7 +387,7 @@ class Workflow:
                             role=identity.acting_role,
                             event_type=AuditEventType.IDEMPOTENT_REPLAY,
                             outcome="REPLAY",
-                            payload={"idempotency_key": idempotency_key},
+                            payload={"idempotency_key": key},
                         )
                         return ApprovalResult.model_validate_json(
                             str(replay["response_json"])
@@ -448,11 +449,11 @@ class Workflow:
                     case=updated, approval=approval, execution=execution
                 )
                 self.repo.save_idempotency(
-                    idempotency_key, request_hash, 200, result.model_dump_json()
+                    key, request_hash, 200, result.model_dump_json()
                 )
                 return result
         except sqlite3.IntegrityError as exc:
-            replay = self.repo.get_idempotency(idempotency_key)
+            replay = self.repo.get_idempotency(key)
             if replay is not None and replay["request_hash"] == request_hash:
                 return ApprovalResult.model_validate_json(str(replay["response_json"]))
             raise WorkflowError(

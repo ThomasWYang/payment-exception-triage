@@ -133,7 +133,7 @@ def test_role_matrix(client: TestClient, settings: Settings) -> None:
     )
     assert approved.status_code == 200, approved.text
     assert approved.json()["case"]["status"] == "EXECUTED"
-    # The agent service cannot read case data; the humans can.
+    # The agent service cannot use the case-read endpoints; the humans can.
     assert client.get("/v1/cases", headers=AGENT).status_code == 403
     assert client.get(f"/v1/cases/{case_id}", headers=AGENT).status_code == 403
     assert (
@@ -647,6 +647,19 @@ def test_readyz_missing_database(settings: Settings) -> None:
     with TestClient(create_app(settings)) as local_client:
         settings.database_path.unlink()
         assert local_client.get("/readyz").status_code == 503
+        assert not settings.database_path.exists()
+
+
+def test_unknown_route_and_method_use_error_envelope(client: TestClient) -> None:
+    missing = client.get("/v1/does-not-exist")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "NOT_FOUND"
+    assert missing.json()["error"]["request_id"] == missing.headers["X-Request-ID"]
+
+    wrong_method = client.delete("/healthz")
+    assert wrong_method.status_code == 405
+    assert wrong_method.json()["error"]["code"] == "METHOD_NOT_ALLOWED"
+    assert wrong_method.headers["allow"] == "GET"
 
 
 def test_missing_policy_startup_fails(tmp_path: Path) -> None:

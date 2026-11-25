@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 import time
 import uuid
@@ -15,6 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from payment_triage.config import Identity, Settings, load_settings
 from payment_triage.db import connect, init_schema
@@ -110,32 +112,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Response:
         request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
         request.state.request_id = request_id
+
+        def reject(
+            status_code: int,
+            code: str,
+            message: str,
+            details: dict[str, object] | None = None,
+        ) -> JSONResponse:
+            logger.info(
+                "request_rejected",
+                extra={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": status_code,
+                    "code": code,
+                },
+            )
+            return _error_response(
+                status_code, code, message, request_id, details
+            )
+
         transfer_encoding = request.headers.get("transfer-encoding", "").lower()
         if "chunked" in transfer_encoding:
-            return _error_response(
-                411,
-                "LENGTH_REQUIRED",
-                "Chunked requests are not supported",
-                request_id,
+            return reject(
+                411, "LENGTH_REQUIRED", "Chunked requests are not supported"
             )
         content_length = request.headers.get("content-length")
         if content_length is None and request.method in {"POST", "PUT", "PATCH"}:
-            return _error_response(
-                411, "LENGTH_REQUIRED", "Content-Length is required", request_id
-            )
+            return reject(411, "LENGTH_REQUIRED", "Content-Length is required")
         if content_length is not None:
             try:
                 length = int(content_length)
             except ValueError:
-                return _error_response(
-                    400, "INVALID_CONTENT_LENGTH", "Invalid Content-Length", request_id
+                return reject(
+                    400, "INVALID_CONTENT_LENGTH", "Invalid Content-Length"
                 )
             if length > current.max_request_bytes:
-                return _error_response(
+                return reject(
                     413,
                     "REQUEST_TOO_LARGE",
                     "Request body is too large",
-                    request_id,
                     {"max_request_bytes": current.max_request_bytes},
                 )
         started = time.monotonic()
@@ -198,6 +215,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _request_id(request),
             {"errors": errors},
         )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        code = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}.get(
+            exc.status_code, "HTTP_ERROR"
+        )
+        response = _error_response(
+            exc.status_code, code, str(exc.detail), _request_id(request)
+        )
+        if exc.headers:
+            for name, value in exc.headers.items():
+                response.headers[name] = value
+        return response
 
     @app.exception_handler(Exception)
     async def handle_unhandled(request: Request, exc: Exception) -> JSONResponse:
@@ -358,11 +390,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/readyz")
     def readyz(request: Request) -> JSONResponse:
         path = request.app.state.settings.database_path
-        if not path.exists():
-            return JSONResponse(status_code=503, content={"status": "unavailable"})
         conn = None
         try:
-            conn = connect(path)
+            conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
             conn.execute("SELECT 1 FROM cases LIMIT 1")
         except Exception:
             return JSONResponse(status_code=503, content={"status": "unavailable"})

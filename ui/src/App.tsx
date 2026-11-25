@@ -21,7 +21,7 @@ function roleHelp(actor: ActorKey, role: ActingRole): string {
     return "Can view cases and audit trails, and request triage. Cannot approve.";
   }
   if (ACTORS[actor].roles.includes("ANALYST")) {
-    return "Can approve other people's cases; cannot approve a case they created or requested triage for.";
+    return "Can approve other people's cases; cannot approve a case they own (assignee) or requested triage for.";
   }
   return "Can approve or reject pending actions. Cannot triage.";
 }
@@ -61,13 +61,13 @@ const SAMPLE_CASES = [
     id: "CASE-1006",
     scenario: "Duplicate of PAY-1000",
     amount: "$1,500",
-    expected: "REFUND pending → approve → EXECUTED",
+    expected: "REFUND_REQUEST pending → approve → EXECUTED",
   },
   {
     id: "CASE-1007",
     scenario: "Customer dispute",
     amount: "$2,500",
-    expected: "REFUND pending → approve → EXECUTED",
+    expected: "REFUND_REQUEST pending → approve → EXECUTED",
   },
   {
     id: "CASE-1008",
@@ -397,12 +397,12 @@ export default function App() {
             <tr>
               <td>Alice (analyst + approver)</td>
               <td>View; request triage; approve other people's cases</td>
-              <td>Approve a case she created or requested triage for</td>
+              <td>Approve a case she owns (assignee) or requested triage for</td>
             </tr>
             <tr>
               <td>Bob (analyst + approver)</td>
               <td>View; request triage; approve other people's cases</td>
-              <td>Approve a case he created or requested triage for</td>
+              <td>Approve a case he owns (assignee) or requested triage for</td>
             </tr>
             <tr>
               <td>Carol (analyst)</td>

@@ -98,6 +98,13 @@ def test_wrong_model_type_and_constructed_args_rejected(repo, settings) -> None:
     assert exc.value.code == "INVALID_TOOL_ARGS"
 
 
-def test_gateway_does_not_expose_repository(repo, settings) -> None:
+def test_gateway_has_no_public_repository_attribute(repo, settings) -> None:
     gateway = ToolGateway(repo, settings.policy_path)
+    # The repository is private to the gateway. Python attribute access is
+    # not a sandbox; the deterministic planner is trusted code.
     assert not hasattr(gateway, "repo")
+    assert set(gateway._tools) == {
+        "payment.lookup",
+        "account.lookup",
+        "policy.search",
+    }

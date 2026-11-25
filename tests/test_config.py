@@ -58,6 +58,12 @@ def test_env_overrides() -> None:
     assert settings.planner_timeout_seconds == 1.5
 
 
+def test_planner_timeout_must_be_finite() -> None:
+    for raw in ("nan", "inf", "-inf"):
+        with pytest.raises(ConfigError, match="finite number"):
+            load_settings({"PLANNER_TIMEOUT_SECONDS": raw})
+
+
 @pytest.mark.parametrize(
     "env",
     [

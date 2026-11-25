@@ -15,8 +15,8 @@ A payment fails, duplicates or is disputed. An operations analyst opens a case. 
 | Role | In the demo | Can do | Cannot do |
 |---|---|---|---|
 | **Agent service** | `agent-key` (AGENT) | Read payment/account/policy evidence; propose; service- or scheduler-initiated triage | Execute, approve or write |
-| **Alice** | `alice-key` (ANALYST + APPROVER) | View; request triage; approve other people's cases | Approve a case she created or requested triage for |
-| **Bob** | `bob-key` (ANALYST + APPROVER) | View; request triage; approve other people's cases | Approve a case he created or requested triage for |
+| **Alice** | `alice-key` (ANALYST + APPROVER) | View; request triage; approve other people's cases | Approve a case she owns (assignee) or requested triage for |
+| **Bob** | `bob-key` (ANALYST + APPROVER) | View; request triage; approve other people's cases | Approve a case he owns (assignee) or requested triage for |
 | **Carol** | `carol-key` (ANALYST) | View; request triage | Approve |
 | **Dave** | `dave-key` (APPROVER) | View; approve or reject pending actions | Triage |
 
@@ -85,7 +85,9 @@ Prerequisites: **Python 3.11+**. Node is not required to run the committed UI.
 
 ```bash
 python -m venv .venv
-# Windows
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
+# Windows (cmd.exe)
 .venv\Scripts\activate
 # macOS / Linux
 source .venv/bin/activate
@@ -229,7 +231,7 @@ python scripts/verify.py
 
 Runs `ruff`, `pytest`, the 30-case golden eval and the end-to-end demo. The same command runs in GitHub Actions, together with a UI build job. The golden eval is a regression/acceptance gate, not a model-quality benchmark.
 
-At the time of writing: **154 tests pass**, the golden eval is **30/30** with zero forbidden executions, and GitHub Actions is green (verify + UI jobs).
+At the time of writing: **157 tests pass**, the golden eval is **30/30** with zero forbidden executions, and GitHub Actions is green (verify + UI jobs).
 
 ```bash
 python scripts/demo.py

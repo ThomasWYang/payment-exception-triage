@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -103,6 +104,8 @@ def _env_float(
         value = float(raw)
     except ValueError as exc:
         raise ConfigError(f"{name} must be a number, got {raw!r}") from exc
+    if not math.isfinite(value):
+        raise ConfigError(f"{name} must be a finite number, got {raw!r}")
     if minimum is not None and value < minimum:
         raise ConfigError(f"{name} must be >= {minimum}, got {value}")
     return value
