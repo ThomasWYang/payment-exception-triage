@@ -62,7 +62,7 @@ The seed creates ten open cases, assigned across all four humans. The UI's **Sam
 
 Each case has three distinct human concepts:
 
-- **Assignee** — the human who owns and handles the case. In this slice it is the analyst who created the case; the server sets it and clients cannot choose it. The assignee is not an approval role.
+- **Assignee** — the human who owns and handles the case. For cases created through the API, it is the analyst who created the case; the seed assigns the demo owners directly. The server sets it and clients cannot choose it. The assignee is not an approval role.
 - **Triage requester** — the human analyst or agent service that requested triage; recorded in `triage_requested_by`. Any analyst (or the agent service) can request triage on any OPEN case, not just the assignee. The assignee remains the owner.
 - **Approver** — a different human acting with the APPROVER role. The approver must not be the assignee or the triage requester: the service denies `SELF_APPROVAL_DENIED` or `TRIAGE_REQUESTER_CANNOT_APPROVE`.
 
