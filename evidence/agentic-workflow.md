@@ -12,6 +12,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 4. **Implementation**: phased build with a commit per phase; subagents for tests, documentation and checklist auditing.
 5. **Verification**: tests, golden-case eval, fresh-clone check, mutation check and a full code review.
 6. **Code-review hardening**: triage the review findings, fix the valid ones with regression tests, and update the evidence.
+7. **Post-review UI/README restructure**: make the UI the primary, self-documenting demo surface; restructure the README for business and technical readers; update the evidence.
 
 ## Representative steering prompts
 
@@ -22,6 +23,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - "If you can finish earlier and meet all requirements, you can create a simple UI with React/Angular separate from the backend API."
 - "Use the code-review skill to review all code if you haven't done so."
 - "Address all valid findings when the code-review agent comes back and update docs if necessary."
+- "Restructure the README so both technical and business people understand the app: what each role does, the rules, and what each sample case does. Do not make the UI optional — it is the easiest way to test and understand the app. Improve the UI/UX so it is understandable without reading the full README."
 
 ## Where I intervened
 
@@ -38,6 +40,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - Fixed buffered output in `scripts/verify.py` so section headers appear before subprocess output.
 - Upgraded the UI toolchain to Vite 8.3 / plugin-react 6.3 after `npm audit` flagged dev-only esbuild issues; rebuild and audit are clean.
 - Added CORS and static serving for the separate React client; the API remains the security boundary.
+- After the first review, made the UI the primary demo surface rather than optional: committed the built `ui/dist`, added an on-screen guide for the flow, roles, rules and sample cases, exposed the live policy caps on `/status`, gated Triage to the analyst role, and restructured the README business-first.
 
 ## Code review and hardening
 
@@ -56,17 +59,18 @@ Deliberate dispositions (documented, not changed):
 
 - Idempotency keys are globally scoped per deployment; clients should use UUIDs.
 - Execution is at-least-once at the workflow boundary; the executor must dedupe on the proposal ID. Production would use an outbox for exactly-once semantics.
-- The UI has no browser automation; it is checked by a TypeScript/Vite build and a server-side smoke test, and the API endpoints it calls are covered by API tests.
+- The UI has no browser automation; it is checked by a TypeScript/Vite build, a server-side smoke test and an asset-serving test, and the API endpoints it calls are covered by API tests.
 
 ## How generated output is reviewed
 
 - Every phase ends with a diff review and a commit.
 - Tests are the oracle: a policy rule is not considered implemented until a failing test exists and passes.
 - The golden-case eval gates regressions with exact expected outcomes and zero forbidden executions.
-- Every code commit from the original build was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 121 after the UI/CORS and code-review hardening. All passed.
+- Every code commit from the original build was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 121 after the UI/CORS and code-review hardening, and 122 after the UI asset-serving test. All passed.
 - A mutation check breaks a rule in a temporary copy and confirms tests fail.
-- A fresh public clone was verified end-to-end: verify, demo, UI build and UI smoke.
-- GitHub Actions is green, including the code-review fix commit.
+- A fresh public clone was verified end-to-end: verify, demo, UI build and UI smoke (including the referenced assets).
+- GitHub Actions is green, including the code-review fix commit and the UI-primary commit (`45588435963`).
+- The UI/README restructure was verified by `npm run build`, `ruff` + `pytest` (122 passed), a fresh clone and CI.
 - Subagents (when used) produce drafts only; I review, run and accept or reject their output.
 
 ## Notes

@@ -32,10 +32,10 @@
 
 **Consequences:** No external service; real enforcement. `recursive_triggers` is enabled so INSERT OR REPLACE cannot bypass the append-only triggers. Production would use Aurora PostgreSQL and an immutable audit store; migrations would be managed separately.
 
-## ADR-5: Scope — optional React UI and what we intentionally did not build
+## ADR-5: React UI is the primary demo surface; what we intentionally did not build
 
-**Context:** The 3-hour timebox and the brief's "no browser UI required" guidance; a visible workflow still helps the round-2 walkthrough.
+**Context:** The brief does not require a browser UI, but the workflow — roles, policy gates, separation of duties, approval and audit — is much easier to test and understand through one. After the first review, the candidate asked to make the UI primary rather than optional and to make it self-explanatory without the README.
 
-**Decision:** Add a small optional React/Vite client in `ui/` that calls the JSON API; the API, demo and verify commands remain the core path. Do not build real payment rails, a real LLM, IdP/OAuth, multi-level approvals, multi-currency, Docker or cloud deployment.
+**Decision:** Make the React/Vite client in `ui/` the primary demo surface. Commit the built `dist/` so `uvicorn` serves `/ui/` with no Node install; Node 22+ is only needed to rebuild. The UI includes an on-screen guide for the three-step flow, roles, rules, sample cases and expected outcomes, plus case details/evidence/approval/audit. It reads the live auto-retry limit, refund cap and mode from `/status`. Do not build real payment rails, a real LLM, IdP/OAuth, multi-level approvals, multi-currency, Docker or cloud deployment.
 
-**Consequences:** Better demo and role/separation-of-duties visibility; Node is an optional prerequisite. The API remains the security boundary; the UI uses synthetic demo keys. Each omission is documented with its production path.
+**Consequences:** The demo is understandable and testable without reading the full README; the API remains the core and the security boundary. The UI uses synthetic demo keys, is not a security boundary, and has no browser automation. Node is only a rebuild-time prerequisite. Each omission is documented with its production path.

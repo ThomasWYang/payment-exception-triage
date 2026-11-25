@@ -7,7 +7,7 @@ python scripts/seed.py --reset
 python -m uvicorn payment_triage.main:app --reload
 ```
 
-The demo (`python scripts/demo.py`) uses a temporary database and needs no setup. The API uses `var/payment_triage.db` by default; `env.example` documents overrides.
+Open **http://127.0.0.1:8000/ui/** for the primary demo. The built UI is committed in `ui/dist`; Node 22+ is only needed to rebuild it (`cd ui && npm ci && npm run build`). The demo (`python scripts/demo.py`) uses a temporary database and needs no setup. The API uses `var/payment_triage.db` by default; `env.example` documents overrides.
 
 ## Logs and status
 
@@ -16,7 +16,7 @@ The demo (`python scripts/demo.py`) uses a temporary database and needs no setup
 - Tool calls are logged as `tool_called` events with the tool name, args hash, outcome and summary.
 - `/healthz`: liveness.
 - `/readyz`: DB file + schema readiness; 503 if the DB is missing or has no schema. It does not create a new DB.
-- `/status`: version, mode (`normal` / `degraded` / `auto_approve_disabled`), uptime, cases by status, policy denials, executor failures, idempotent replays, approval denials, auth denials.
+- `/status`: version, mode (`normal` / `degraded` / `auto_approve_disabled`), uptime, cases by status, policy denials, executor failures, idempotent replays, approval denials, auth denials, and the live policy caps (`auto_retry_limit_cents`, `refund_cap_cents`, `auto_approve_enabled`, `degraded_mode`). The UI shows the mode in the status bar and the caps in the rules panel.
 - Audit: `GET /v1/cases/{id}/audit`; append-only; UPDATE/DELETE/REPLACE are blocked by triggers.
 
 ## Configuration and secrets
@@ -58,12 +58,13 @@ All configuration is environment-based. `env.example` documents the synthetic de
 | Duplicate approval | audit `IDEMPOTENT_REPLAY` | Expected; one execution row |
 | Idempotency key reused across cases | 409 `IDEMPOTENCY_CONFLICT` | Keys are globally scoped; use a UUID per request |
 | Audit tamper attempt | `audit_events is append-only` | Expected; UPDATE/DELETE/REPLACE are blocked |
+| `/ui/` 404 or blank | `ui/dist/index.html` exists | Rebuild the committed UI (`cd ui && npm ci && npm run build`) and commit `dist/`; the API serves only the built assets |
 
 ## Rollback and degrade
 
 - `AUTO_APPROVE_ENABLED=false`: no auto-approval; retries, refunds and holds require approval.
 - `DEGRADED_MODE=true`: `/status` shows `degraded`; retries, refunds and holds require approval.
-- Code rollback: redeploy the previous version; the schema is additive and `PRAGMA user_version` is set. Production would use expand/contract migrations.
+- Code rollback: redeploy the previous version; the schema is additive and `PRAGMA user_version` is set. The UI is versioned with the API in the same repo, so a rollback restores the matching `ui/dist`. Production would use expand/contract migrations.
 - The executor is a mock; no money moves.
 
 ## Local to cloud

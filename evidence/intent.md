@@ -26,7 +26,7 @@ An AI agent can gather evidence and propose an action, but it must not be truste
 
 - 3-hour build timebox, plus 15 minutes packaging.
 - Runs locally from a clean checkout with no paid services, credentials or restricted data.
-- Python 3.11+; FastAPI, Pydantic, SQLite; no frontend framework.
+- Python 3.11+; FastAPI, Pydantic, SQLite; a small React/Vite UI served by the API (built assets committed).
 - Public repository with incremental commits.
 - One meaningful end-to-end workflow.
 
@@ -35,7 +35,7 @@ An AI agent can gather evidence and propose an action, but it must not be truste
 - Real payment rails, real money movement, multi-currency/FX, partial refunds.
 - Real LLM runtime or model provider integration.
 - Full identity provider/OAuth; multi-level approval chains.
-- Browser SPA; the optional `/ui` page is a thin demo client.
+- A production frontend/BFF and SSO; the demo UI is a thin client served by the API with synthetic keys.
 - Cloud deployment; the production/CI-CD path is documented only.
 - Rate limiting, background workers, event sourcing.
 
@@ -49,3 +49,4 @@ An AI agent can gather evidence and propose an action, but it must not be truste
 - `python scripts/verify.py` passes from a clean checkout.
 - `python scripts/demo.py` runs the workflow offline in under 60 seconds with no configuration.
 - The core path makes no outbound network calls.
+- The UI is the primary demo surface; it explains the roles, rules and sample cases without the README, and the built assets run without Node.

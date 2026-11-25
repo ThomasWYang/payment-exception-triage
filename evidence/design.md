@@ -59,7 +59,7 @@ Append-only audit + JSON logs + /healthz /readyz /status
 - **Executor**: protocol; mock implementation; idempotent by proposal.
 - **Repository**: parameterized SQL, constraints, foreign keys, WAL mode.
 - **Audit**: append-only table with triggers blocking UPDATE/DELETE.
-- **UI**: optional React/Vite demo client; not a security boundary.
+- **UI**: primary React/Vite demo client, served at `/ui/` from committed assets; not a security boundary.
 
 ## Data model
 
@@ -99,7 +99,7 @@ All money is integer cents; currency is AUD only; timestamps are UTC ISO 8601.
 | `GET` | `/v1/cases?status=...` | ANALYST / APPROVER | List / approval queue |
 | `POST` | `/v1/cases/{id}/approve` | APPROVER | Approve/reject; `Idempotency-Key` required |
 | `GET` | `/v1/cases/{id}/audit` | ANALYST / APPROVER | Audit trail |
-| `GET` | `/healthz`, `/readyz`, `/status` | public (local) | Liveness, readiness, counters |
+| `GET` | `/healthz`, `/readyz`, `/status` | public (local) | Liveness, readiness, counters and policy caps |
 
 The create-case request does not accept an assignee; the server sets it to the creating analyst. Business outcomes (policy rejection, escalation, executor failure) return 200 with the case status and reason codes. Transport/auth/validation errors use 4xx/5xx with a consistent error envelope.
 
@@ -151,7 +151,7 @@ The create-case request does not accept an assignee; the server sets it to the c
 - **Hand-written SQL vs ORM**: fewer dependencies and visible constraints; more boilerplate.
 - **Synchronous execution vs queue**: simpler slice; production would use SQS/Step Functions.
 - **API keys vs OAuth**: synthetic local stand-in; production uses the enterprise IdP.
-- **Thin React UI vs no UI**: better walkthrough; the API/demo remain the core path.
+- **Thin React UI vs no UI**: the UI is the primary demo surface; it makes the roles, rules and outcomes visible without reading the docs, while the API remains the core and the security boundary.
 
 ## Production / cloud shape
 
@@ -160,15 +160,15 @@ API Gateway/ALB → ECS Fargate or Lambda → Aurora PostgreSQL; SQS/Step Functi
 ## CI/CD promotion
 
 - **Local**: `python scripts/verify.py` (ruff + pytest + golden eval).
-- **PR**: the same checks on GitHub Actions; optional UI build job.
+- **PR**: the same checks on GitHub Actions plus the UI build job.
 - **Build**: container image, SBOM, image scan (future).
 - **Dev**: Terraform deploy + smoke tests.
 - **Staging**: integration tests against managed services, load test (future).
 - **Prod**: manual approval, canary 5% → 25% → 100%, rollback on error/latency budget.
 
-## Optional React UI
+## React UI (primary demo surface)
 
-The `ui/` folder contains a small React/Vite client that calls the JSON API. It is a demo client only; it uses the synthetic demo keys, and the API remains the security boundary. It reuses one idempotency key per pending approval and only shows approval actions to approver roles. Production would use SSO and a backend-for-frontend, never service keys in the browser. The core path (API + demo + verify) does not depend on it.
+The `ui/` folder contains a small React/Vite client that calls the JSON API and is the primary way to explore the app. The built assets are committed in `ui/dist` and served by FastAPI at `/ui/`, so running the demo needs only Python; Node 22+ is required only to rebuild. The screen explains the three-step flow, roles, rules, sample cases and expected outcomes, and shows case details, evidence, approval and audit. It reads the live auto-retry limit, refund cap and mode from `/status`. Triage is offered to the analyst role; approval actions are offered to approver roles. It reuses one idempotency key per pending approval. It is a demo client only; it uses the synthetic demo keys, and the API remains the security boundary. Production would use SSO and a backend-for-frontend, never service keys in the browser. The core API and demo do not depend on the UI, but the UI is the recommended walkthrough.
 
 ## What was intentionally not built
 

@@ -4,18 +4,29 @@
 
 - `python scripts/verify.py` — ruff + pytest + golden eval (the CI command).
 - `python scripts/demo.py` — end-to-end workflow demo.
-- `python -m uvicorn payment_triage.main:app --reload` — local API (optional).
-- `cd ui && npm ci && npm run build` — optional React UI build.
+- `python -m uvicorn payment_triage.main:app --reload` — local API and the UI at `/ui/`.
+- `cd ui && npm ci && npm run build` — rebuild the committed UI (Node 22+; not needed to run it).
 
-## Results (2026-11-24)
+## Results (2026-11-24, updated 2026-11-25)
 
 - `ruff check .`: pass.
-- `pytest`: 121 passed with the UI built; 120 passed + 1 skipped when `ui/dist` is absent (the UI smoke test is conditional).
-- Golden eval: 30 cases; action 30/30, policy 30/30, status 30/30, reason codes 30/30; forbidden executions 0; idempotency replay pass; p95 triage latency ~2 ms.
+- `pytest`: 122 passed. The built UI is committed, so the UI smoke and asset-serving tests run; they skip only if `ui/dist` is removed.
+- Golden eval: 30 cases; action 30/30, policy 30/30, status 30/30, reason codes 30/30; forbidden executions 0; idempotency replay pass; p95 triage latency ~4 ms locally.
 - Demo: auto retry EXECUTED; high-value retry approved → EXECUTED; duplicate refund approved → EXECUTED; dispute over cap ESCALATED; closed account ESCALATED; self-approval DENIED; duplicate approval IDEMPOTENT (1 execution).
-- React UI: `npm run build` pass; `npm audit` 0 vulnerabilities; `GET /ui/` smoke test 200; CORS preflight test pass.
-- Fresh public clone after hardening: `scripts/verify.py` pass (120 passed + 1 skipped without the UI build); demo pass; UI build pass; UI smoke pass after the build.
-- GitHub Actions: green, including the code-review fix commit (run `45396278122`).
+- Seed guide check: all eight seeded cases produce the outcomes in the README/UI sample table — 1001 and 1003 auto-execute; 1002, 1006 and 1007 wait for approval; 1004, 1005 and 1008 escalate.
+- React UI (primary demo surface): `npm run build` pass; `npm audit` 0 vulnerabilities; `GET /ui/` smoke test 200; CORS preflight test pass. The built `ui/dist` is committed, so the UI runs without Node.
+- Fresh public clone of the final code commit (`7e1fb76`): `scripts/verify.py` pass (122 passed); demo pass; UI smoke and asset-serving pass from the committed assets.
+- GitHub Actions: green, including the code-review fix commit (`45396278122`) and the UI-primary commit (`45588435963`, verify + UI jobs).
+
+## UI/README restructure (2026-11-25)
+
+- The React UI is the primary demo surface; the built `ui/dist` is committed and served at `/ui/` with no Node install.
+- The screen explains the three-step flow, roles, rules, live policy caps, sample cases and expected outcomes; Details and Audit show the proposal, evidence, approval, execution and audit trail.
+- Triage is offered to the analyst role; approvals to approver roles; the UI reuses one idempotency key per pending approval.
+- `ruff` + `pytest`: 122 passed; UI `npm run build`: pass; `npm audit`: 0 vulnerabilities.
+- The new UI source was checked by the TypeScript/Vite build, the API tests and the asset-serving test; the earlier full-repo code review covered the backend and the original UI.
+- Fresh public clone of the pushed UI commit (`7e1fb76`): verify pass (122 passed); demo pass; UI smoke and asset-serving pass.
+- GitHub Actions: green for the UI-primary commit (`45588435963`) and the UI role/asset commit (`45589701881`); the docs commit is checked by the same pipeline.
 
 ## Code-review hardening
 
@@ -44,7 +55,7 @@ Deliberate dispositions:
 
 - Idempotency keys are globally scoped per deployment; clients should use UUIDs (documented).
 - Execution is at-least-once at the workflow boundary; the executor receives the proposal ID as a durable idempotency key and must dedupe. Production would use an outbox for exactly-once semantics.
-- The UI has no browser automation; it is checked by a TypeScript/Vite build and a server-side smoke test, and the API endpoints it calls are covered by API tests.
+- The UI has no browser automation; it is checked by a TypeScript/Vite build, a server-side smoke test and an asset-serving test, and the API endpoints it calls are covered by API tests.
 
 ## Per-commit verification
 
@@ -60,20 +71,21 @@ Every code commit from the original build was checked out in an isolated worktre
 | `a0bf1de` API and operational endpoints | 95 passed |
 | `95b731d` golden eval and verify script | 96 passed |
 | `13b3193` demo | 96 passed |
-| current tree after UI/CORS/code-review hardening | 121 passed |
+| `74e23ed` UI primary + `/status` caps | 121 passed (CI run `45588435963`) |
+| current tree after the UI role-gating fix, asset-serving test and README/evidence restructure | 122 passed |
 
 The scaffold and docs commits contain no code or tests.
 
 ## Mutation check
 
-In a temporary worktree, the refund-cap rule was disabled (`if draft.amount_cents > self.settings.refund_cap_cents` → `if False`). The policy test `test_refund_over_cap_rejected`, the eval-gate test and the golden eval (G-012, G-029) failed as expected; the main history was unchanged. (The UI smoke test also failed in the worktree because the built UI is intentionally untracked; that is not a mutation signal.)
+In a temporary worktree, the refund-cap rule was disabled (`if draft.amount_cents > self.settings.refund_cap_cents` → `if False`). The policy test `test_refund_over_cap_rejected`, the eval-gate test and the golden eval (G-012, G-029) failed as expected; the main history was unchanged. (The mutation check ran before the built UI was committed, so the UI smoke test was conditional in that worktree; the built UI is now tracked. That was not a mutation signal.)
 
 ## Test matrix
 
 - **Unit**: config validation; money/currency; tool allowlist/schema/attempt budget; planner mappings and abstain; each policy rule; role checks; separation of duties; state machine; redaction; idempotency.
 - **Integration**: happy paths, approval, refund, escalation, 401/403/409, idempotency (including concurrent same-key), executor failure, degraded mode (retry and hold), payload limits, audit immutability (UPDATE/DELETE/REPLACE).
 - **API**: role matrix, validation, request ID, oversized/chunked bodies, not found, self-approval, idempotency, CORS preflight, root redirect, readiness failure paths, missing-policy startup.
-- **UI**: TypeScript/Vite build; `GET /ui/` server-side smoke test; no browser automation.
+- **UI**: primary demo surface; TypeScript/Vite build; `GET /ui/` smoke test; every referenced hashed asset is fetched and checked; no browser automation.
 - **Eval gate**: 30 golden cases plus an idempotency replay check.
 
 ## Local vs CI
@@ -95,5 +107,5 @@ In a temporary worktree, the refund-cap rule was disabled (`if draft.amount_cent
 - Idempotency keys are globally scoped per deployment; clients should use UUIDs.
 - The deterministic planner is trusted code; an untrusted/LLM planner should run out of process.
 - Chunked requests are rejected; production would enforce the size limit at the API gateway/WAF.
-- The UI has a build check and a server-side smoke test, but no browser automation.
+- The UI has a build check, a server-side smoke test and an asset-serving test, but no browser automation.
 - Rate limiting and background retries are future work.
