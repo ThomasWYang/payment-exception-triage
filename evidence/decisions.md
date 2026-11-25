@@ -39,3 +39,19 @@
 **Decision:** Make the React/Vite client in `ui/` the primary demo surface. Commit the built `dist/` so `uvicorn` serves `/ui/` with no Node install; Node 22+ is only needed to rebuild. The UI includes an on-screen guide for the three-step flow, roles, rules, sample cases and expected outcomes, plus case details/evidence/approval/audit. It reads the live auto-retry limit, refund cap and mode from `/status`. Do not build real payment rails, a real LLM, IdP/OAuth, multi-level approvals, multi-currency, Docker or cloud deployment.
 
 **Consequences:** The demo is understandable and testable without reading the full README; the API remains the core and the security boundary. The UI uses synthetic demo keys, is not a security boundary, and has no browser automation. Node is only a rebuild-time prerequisite. Each omission is documented with its production path.
+
+## ADR-6: Multi-role identities and four-eye approval
+
+**Context:** Real staff can hold multiple roles; the slice gives each key one role and uses two keys for the same actor (`user:alice`) to test separation of duties. A user with analyst and approver roles could otherwise create or triage a case and then approve it.
+
+**Decision:** In production, source a role set from the IdP and require an explicit active role per action. Use a separate service identity for the agent/scheduler with read-and-propose only. Record case participants (`created_by`, `assigned_to`, `triage_requested_by`, `proposed_by`, `approved_by`) and require the approver to be a human who is not the creator, assignee, triage requester, proposer or editor. No self-approval; if no independent approver is available, leave the case pending/escalated; a break-glass path needs a second approver or supervisor and a specific audit event. The slice's `approver.actor != case.assignee` check is a proxy for the seeded single-analyst demo.
+
+**Consequences:** Holding both roles is not itself a violation, but the same actor cannot be both maker and checker for the same case. The audit records the active role and actor. Production needs participant history, access reviews, separate service accounts and an approval queue for small teams.
+
+## ADR-7: LLM planner behind the same guardrails
+
+**Context:** The slice uses a deterministic planner for reproducibility, offline operation and no keys. An LLM could improve evidence synthesis, exception classification and policy retrieval, but it must not gain execute or approval authority.
+
+**Decision:** Keep the `Planner` protocol as the seam. An LLM planner runs out of process, uses the read-only tool gateway, returns a schema-validated proposal with evidence refs, and is wrapped by confidence/abstain and deterministic fallback. The policy engine, approval, separation of duties, idempotency, executor and audit remain service-side and model-agnostic. Roll out shadow → LLM-assisted with human approval → multi-step read-only agent, gated by evals, canary and a kill switch.
+
+**Consequences:** The slice stays deterministic and key-free; the controls do not change when the model changes. LLM-specific work: prompt-injection defenses, PII redaction, evidence grounding, model/prompt versioning, cost/latency budgets, adversarial/grounding evals, vendor/DPIA. The LLM never executes, approves or becomes the audit source.

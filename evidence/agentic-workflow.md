@@ -24,6 +24,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - "Use the code-review skill to review all code if you haven't done so."
 - "Address all valid findings when the code-review agent comes back and update docs if necessary."
 - "Restructure the README so both technical and business people understand the app: what each role does, the rules, and what each sample case does. Do not make the UI optional — it is the easiest way to test and understand the app. Improve the UI/UX so it is understandable without reading the full README."
+- "How would a real system grant multiple roles and enforce four-eye? How could this app expand to use an LLM? Document the expandability."
 
 ## Where I intervened
 
@@ -41,6 +42,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - Upgraded the UI toolchain to Vite 8.3 / plugin-react 6.3 after `npm audit` flagged dev-only esbuild issues; rebuild and audit are clean.
 - Added CORS and static serving for the separate React client; the API remains the security boundary.
 - After the first review, made the UI the primary demo surface rather than optional: committed the built `ui/dist`, added an on-screen guide for the flow, roles, rules and sample cases, exposed the live policy caps on `/status`, gated Triage to the analyst role, and restructured the README business-first.
+- Documented the production multi-role/four-eye model and the LLM planner expansion (design-only) without adding a model runtime to the slice.
 
 ## Code review and hardening
 

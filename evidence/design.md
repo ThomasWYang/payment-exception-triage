@@ -114,6 +114,19 @@ The create-case request does not accept an assignee; the server sets it to the c
 - Duplicate approval/execution replays the prior result.
 - Degraded mode / `AUTO_APPROVE_ENABLED=false` forces approval for retries, refunds and holds.
 
+## Production identity, multi-role and four-eye
+
+The slice gives each API key one role and uses two keys for the same actor (`user:alice`: `analyst-key` and `approver-alice-key`) to demonstrate multi-role and separation of duties. Production would model roles differently:
+
+- **Roles are a set from the IdP**, not one credential per role. The token carries `sub` and `roles`; the service checks membership and requires an explicit active role for the action (or derives it from the endpoint and records it). The active role is shown in the UI and written to the audit. Do not silently pick the highest privilege. Example: `roles={"analyst","approver"}`, `active_role="approver"`.
+- **Service identities are separate.** The agent/scheduler has a dedicated `AGENT`/`SERVICE` identity with read-and-propose only. It never holds an analyst or approver role. If it creates cases, it does so as a service actor and the case is assigned to a human or queue.
+- **The case records participants**: `created_by`, `assigned_to`, `triage_requested_by`, `proposed_by`, `approved_by`. The agent may be `proposed_by`; the human approver must be independent.
+- **Four-eye / maker-checker is enforced on actor identity and case participation**, not on role alone. The approver must be a human with the approver role and must not be the creator, assignee, triage requester, proposal author/editor or beneficiary. A user may hold both analyst and approver roles; they can act in either, but the same actor cannot be both maker and checker for the same case.
+- **No independent approver**: leave the case pending or escalate; do not allow self-approval. A break-glass path needs a second approver or supervisor and a specific audit event.
+- **Operations**: periodic access reviews, least privilege, separate human/service accounts, monitoring for toxic combinations, and a queue for small teams.
+
+The slice's check is `approver.actor != case.assignee` (`policy.py`). It is sufficient for the seeded single-analyst demo: every case is assigned to `user:alice`, so her approver credential is denied and Bob can approve. It does not record a human triage requester when the UI uses the agent key, and it does not check proposal editors. Production would extend the check to the participant history above; this is a deliberate slice simplification.
+
 ## Security and privacy
 
 - The agent has no execute tool; only read-only tools are exposed.
@@ -146,12 +159,40 @@ The create-case request does not accept an assignee; the server sets it to the c
 
 ## Key trade-offs
 
-- **Deterministic planner vs LLM**: reproducible, offline, no keys; a real LLM can implement the same protocol later without changing the controls.
+- **Deterministic planner vs LLM**: reproducible, offline, no keys; a real LLM can implement the same protocol later without changing the controls (see the LLM/AI expansion section).
 - **SQLite vs managed DB**: zero local setup; production would use Aurora PostgreSQL.
 - **Hand-written SQL vs ORM**: fewer dependencies and visible constraints; more boilerplate.
 - **Synchronous execution vs queue**: simpler slice; production would use SQS/Step Functions.
 - **API keys vs OAuth**: synthetic local stand-in; production uses the enterprise IdP.
 - **Thin React UI vs no UI**: the UI is the primary demo surface; it makes the roles, rules and outcomes visible without reading the docs, while the API remains the core and the security boundary.
+
+## LLM/AI expansion (design-only)
+
+The slice deliberately uses a deterministic planner: reproducible tests, offline demo, no keys or model provider. The seam for a real model is the `Planner` protocol (`planner.py`): `plan(case, gateway) -> Proposal`. An `LLMPlanner` can implement it without changing the tool gateway, policy, approval, executor or audit. The model would run out of process and get only the read-only tools.
+
+**Where an LLM adds value:** evidence summarization with citations, exception classification from free-text notes, policy retrieval/RAG, rationale drafting, case prioritization, customer-communication drafts, anomaly/fraud signals, and multi-step read-only investigation.
+
+**What stays deterministic:** the policy limits, approval requirements, separation of duties, idempotency, execution and audit. The LLM proposes; the service decides and executes.
+
+**Guardrails:**
+- Structured output (JSON schema/Pydantic); invalid output → escalate.
+- Read-only tool allowlist, schema validation, max tool calls, wall-clock/token/cost budgets.
+- Prompt-injection defenses: treat payment/customer text as untrusted data; delimit it; never follow instructions from it; validate the output and actions.
+- PII redaction before the model call; private endpoint/contract; no training on bank data; retention/residency/DPIA.
+- Evidence grounding: require citations to tool-result refs; the service verifies the refs; unsupported claims → escalate.
+- Confidence/abstain; low confidence → escalate; never auto-approve on confidence.
+- Deterministic fallback and a kill switch (degraded mode) on timeout/error/invalid output.
+- Audit the model ID, prompt version/hash, tool calls and proposal; pin versions and change-control prompts.
+- Evals: golden cases plus adversarial/prompt-injection, grounding/hallucination, policy compliance, cost/latency; shadow mode and canary before exposure.
+
+**Phased rollout:**
+1. Deterministic planner (current baseline).
+2. Shadow LLM: run in parallel, compare to deterministic/golden, no execution.
+3. LLM-assisted proposal with human approval and deterministic fallback, starting with low-risk cases.
+4. Multi-step read-only agent with budgets and the same approval/audit.
+5. Optimize with RAG/fine-tuning, expand exception types, and tune cost/latency.
+
+**Do not:** give the LLM execute tools; put policy only in the prompt; trust the rationale or evidence without verification; auto-approve on model confidence; send PII/secrets without redaction/contract; use the LLM as the audit source; let it choose or bypass the approver.
 
 ## Production / cloud shape
 
@@ -173,6 +214,6 @@ The `ui/` folder contains a small React/Vite client that calls the JSON API and 
 ## What was intentionally not built
 
 - Real payment rails, real money, multi-currency/FX, partial refunds.
-- A real LLM runtime or external model provider.
-- Full IdP/OAuth, multi-level approval chains, delegated authority.
+- A real LLM runtime or external model provider; the expansion path is documented above.
+- Full IdP/OAuth, multi-level approval chains, delegated authority; the production multi-role/four-eye model is documented above.
 - Cloud deployment, Docker packaging, rate limiting, background workers, event sourcing.

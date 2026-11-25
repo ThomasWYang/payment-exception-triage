@@ -192,11 +192,12 @@ Runs the lifecycle without the UI.
 
 ### Known limitations
 
-- The planner is deterministic, not an LLM. The exercise allows non-AI products; the AI-agent requirement is the development process. A real LLM can implement the same `Planner` protocol without changing the controls.
+- The planner is deterministic, not an LLM. The exercise allows non-AI products; the AI-agent requirement is the development process. A real LLM can implement the same `Planner` protocol without changing the controls. The expansion path is in `evidence/design.md` and ADR-7.
 - The executor is a mock; no real payment rails or money movement. Execution is at-least-once at the workflow boundary; the executor receives the proposal ID as a durable idempotency key and must dedupe. Production would use an outbox for exactly-once semantics.
 - SQLite is embedded for zero-setup local run; production would use a managed relational database.
 - API keys are synthetic; production would use the enterprise IdP/OAuth.
 - One approval level; no multi-level approval chains.
+- The slice's separation-of-duties check is the case assignee; production would also exclude the human triage requester and proposal editors (see "Production identity and AI expansion").
 - AUD only; no FX or partial refunds.
 - No Docker or cloud deployment; the production/CI-CD path is documented in `evidence/design.md`.
 - Idempotency keys are globally scoped per deployment; clients should use UUIDs.
@@ -204,6 +205,12 @@ Runs the lifecycle without the UI.
 - Chunked request bodies are rejected with 411; the request-size guard uses Content-Length. Production would enforce the limit at the API gateway/WAF.
 - The UI has a TypeScript/Vite build check, a server-side smoke test and an asset-serving check, but no browser automation.
 - No rate limiting; production would add it at the gateway.
+
+### Production identity and AI expansion
+
+The demo gives each key one role and uses two keys for the same actor (Alice) to demonstrate multi-role and separation of duties. Production would source a role set from the IdP, require an explicit active role, use a separate service identity for the agent/scheduler, and exclude every human who created, owns, requested triage for or edited the case from approving it — not just the assignee. The slice's check is `approver != assignee`; the production model is in `evidence/design.md` and ADR-6.
+
+The deterministic planner is a stand-in. An LLM can implement the same `Planner` protocol behind the read-only tool gateway, with structured output, evidence grounding, confidence/abstain, deterministic fallback and the same service-side policy, approval, separation of duties and audit. The phased path, guardrails and what stays deterministic are in `evidence/design.md` and ADR-7. The LLM would propose; it would never execute or approve.
 
 ### Evidence pack
 

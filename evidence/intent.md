@@ -18,7 +18,7 @@ An AI agent can gather evidence and propose an action, but it must not be truste
 - All data is synthetic; no real customers, accounts, payments or Westpac data.
 - Single currency (AUD); amounts are integer cents.
 - One approval level; no delegated authority or multi-step chains.
-- The planner is deterministic and offline; no LLM runtime or external API key.
+- The planner is deterministic and offline; no LLM runtime or external API key. The `Planner` protocol is the seam for an LLM (see `design.md`).
 - The executor is a mock; no real money moves.
 - SQLite is the local backing store; production would use a managed relational database.
 
@@ -33,7 +33,7 @@ An AI agent can gather evidence and propose an action, but it must not be truste
 ## Out of scope
 
 - Real payment rails, real money movement, multi-currency/FX, partial refunds.
-- Real LLM runtime or model provider integration.
+- Real LLM runtime or model provider integration; the expansion path is documented in `design.md`.
 - Full identity provider/OAuth; multi-level approval chains.
 - A production frontend/BFF and SSO; the demo UI is a thin client served by the API with synthetic keys.
 - Cloud deployment; the production/CI-CD path is documented only.

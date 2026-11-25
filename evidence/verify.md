@@ -101,7 +101,7 @@ In a temporary worktree, the refund-cap rule was disabled (`if draft.amount_cent
 ## Known gaps
 
 - The golden eval is a synthetic regression gate, not a model-quality benchmark.
-- No real payment processor, LLM, IdP, multi-level approval or cloud deployment.
+- No real payment processor, LLM, IdP, multi-level approval or cloud deployment. The production multi-role/four-eye model and the LLM expansion path are documented in `design.md` (ADR-6/ADR-7); they are not implemented in the slice.
 - SQLite and synthetic API keys are local-slice choices; the production mapping is documented.
 - Execution is at-least-once at the workflow boundary; the executor must dedupe on the proposal ID. An outbox would provide exactly-once semantics in production.
 - Idempotency keys are globally scoped per deployment; clients should use UUIDs.
