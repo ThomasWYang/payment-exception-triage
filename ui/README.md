@@ -1,13 +1,13 @@
 # Payment Exception Triage UI
 
-A small React/Vite client for the local API. It is a demo client only: the API enforces every role, policy and state check.
+The primary demo surface for the local API. The built UI is committed in `dist/` and served by FastAPI at `/ui/`; no Node install is required to run it.
 
 ## Prerequisites
 
-- Node.js 22+ and npm
-- The API running locally
+- Python 3.11+ (for the API)
+- Node.js 22+ only if you want to develop or rebuild the UI
 
-## Run the API
+## Run the demo
 
 From the repository root:
 
@@ -16,28 +16,36 @@ python scripts/seed.py --reset
 python -m uvicorn payment_triage.main:app --reload
 ```
 
-## Run the UI in development
+Open `http://127.0.0.1:8000/ui/`.
+
+The screen includes:
+
+- a three-step "how it works" guide;
+- roles and rules panels;
+- the sample cases and expected outcomes;
+- case details (rationale, evidence, approval, execution);
+- the append-only audit trail.
+
+## Develop
 
 ```bash
 cd ui
-npm install
+npm ci
 npm run dev
 ```
 
 Open `http://localhost:5173/ui/`.
 
-The API base URL defaults to `http://127.0.0.1:8000`. Override it with `VITE_API_BASE_URL` if needed.
-
-## Build and serve from FastAPI
+## Rebuild the committed UI
 
 ```bash
 cd ui
-npm install
+npm ci
 npm run build
 ```
 
-The FastAPI app serves `ui/dist` at `/ui/` when that folder exists. Start the API and open `http://127.0.0.1:8000/ui/`.
+Commit the updated `dist/` so the API serves the new build without Node.
 
 ## Security note
 
-The UI uses the synthetic demo API keys from the main README. It is not part of the security boundary. Production would use SSO and a backend-for-frontend, never service keys in the browser.
+The UI uses the synthetic demo API keys from the main README and is a demo client only. The API enforces every role, policy and state check. Production would use SSO and a backend-for-frontend, never service keys in the browser.

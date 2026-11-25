@@ -70,6 +70,10 @@ def test_health_ready_and_status(client: TestClient) -> None:
     assert body["mode"] == "normal"
     assert "cases" in body
     assert body["auth_denials"] == 0
+    assert body["auto_retry_limit_cents"] == 100000
+    assert body["refund_cap_cents"] == 1000000
+    assert body["auto_approve_enabled"] is True
+    assert body["degraded_mode"] is False
 
 
 def test_auth_required(client: TestClient) -> None:

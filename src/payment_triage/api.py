@@ -357,6 +357,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "mode": mode,
             "uptime_seconds": round(time.monotonic() - request.app.state.started_at, 1),
             "auth_denials": request.app.state.auth_denials,
+            "auto_retry_limit_cents": app_settings.auto_retry_limit_cents,
+            "refund_cap_cents": app_settings.refund_cap_cents,
+            "auto_approve_enabled": app_settings.auto_approve_enabled,
+            "degraded_mode": app_settings.degraded_mode,
         }
         payload.update(workflow.status())
         return payload

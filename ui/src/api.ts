@@ -17,14 +17,30 @@ export interface CaseItem {
   status: string;
 }
 
+export interface EvidenceRef {
+  source: string;
+  ref: string;
+  summary: string;
+}
+
 export interface Proposal {
   id: string;
   action: string;
   amount_cents: number | null;
   rationale: string;
+  evidence: EvidenceRef[];
+  planner_version: string;
   policy_outcome: string;
   reason_codes: string[];
   requires_approval: boolean;
+}
+
+export interface Approval {
+  id: string;
+  decision: string;
+  approver: string;
+  rationale_redacted: string;
+  created_at: string;
 }
 
 export interface Execution {
@@ -36,7 +52,7 @@ export interface Execution {
 export interface CaseView {
   case: CaseItem;
   proposal: Proposal | null;
-  approval: unknown | null;
+  approval: Approval | null;
   execution: Execution | null;
 }
 
@@ -70,6 +86,10 @@ export interface ServiceStatus {
   executor_failures: number;
   idempotent_replays: number;
   approval_denials: number;
+  auto_retry_limit_cents: number;
+  refund_cap_cents: number;
+  auto_approve_enabled: boolean;
+  degraded_mode: boolean;
 }
 
 export interface ErrorEnvelope {
