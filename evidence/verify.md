@@ -115,4 +115,5 @@ In a temporary worktree, the refund-cap rule was disabled (`if draft.amount_cent
 - Chunked requests are rejected; production would enforce the size limit at the API gateway/WAF.
 - The UI has a build check, a server-side smoke test and an asset-serving test, but no browser automation.
 - SQLite is single-writer; execution runs inside the DB transaction; the planner uses a thread per triage; the case list is N+1; idempotency keys and audit rows grow without TTL/retention; `/status` counters are per process. The production path (managed DB, outbox/queue, separate planner service, Redis/gateway rate limits, aggregated metrics, audit export) is documented in `design.md`/ADR-8/`operate.md`. A load test is future work.
+- CAP/distributed consistency is design-only: the slice is single-node. The target is CP for case/approval/execution and AP for case lists, metrics and audit export, with an outbox/queue and an idempotent executor (`design.md`, ADR-9).
 - Rate limiting and background retries are future work.

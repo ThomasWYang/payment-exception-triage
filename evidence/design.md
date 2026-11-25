@@ -173,6 +173,43 @@ The local slice is a single-node FastAPI + SQLite app, built for a local demo, n
 
 The only local code changes made for scalability are the audit pagination cap and the audit event-type index. The managed DB, queue/outbox, Redis (rate limiting/cache/hot idempotency) and a separate LLM planner service are external components, intentionally out of the slice. A k6/Locust load test with concurrent triage/approval writers is the next step; watch p95, DB lock errors, planner latency, audit growth and queue depth.
 
+## CAP and distributed consistency
+
+Under a network partition, CAP forces a choice between consistency and availability. For payment exceptions the choice is not the same for every path:
+
+| Path | CAP choice | Behavior under a partition / outage |
+|---|---|---|
+| Case state, approvals, execution intent | **CP** | Fail closed; quorum/primary write; no double approval or execution |
+| Case list, dashboards, metrics, audit export | **AP** | Read replicas/caches; bounded staleness; the approval write re-checks the authoritative state |
+| Planner/LLM proposal | **AP (advisory)** | Deterministic fallback or escalate; no financial effect |
+| Identity/authorization | **CP (fail closed)** | Auth unavailable means no approvals; cached JWKS with short TTL |
+
+PACELC: when there is no partition, the approval path pays latency for strong consistency; lists and metrics use replicas for latency and accept bounded staleness. The slice is a single-node SQLite app, so it has no partition tolerance; it is effectively a local CP seed: one writer, `BEGIN IMMEDIATE`, unique constraints, idempotency keys, compare-and-set status transitions and `/readyz` fail-closed. Those contracts carry into a distributed design.
+
+**Distributed target:**
+- **CP data plane**: Aurora PostgreSQL (multi-AZ/quorum) as the system of record; writes and the approval decision use the primary (or a session-consistent read); optimistic concurrency/compare-and-set and unique constraints are the arbiter; read replicas serve lists and dashboards. A partition or primary outage returns 503 for writes rather than accepting a possibly-duplicate approval.
+- **Outbox + queue for execution**: the approval transaction writes the approval and an outbox row; a worker publishes to SQS/Step Functions/Kafka; the executor uses the proposal ID as the payment-rail idempotency key; at-least-once delivery, consumer dedupe, retries, DLQ and reconciliation. There is no distributed transaction between the case DB and the payment rail; the state machine/saga (`PENDING_APPROVAL` → `EXECUTING` → `EXECUTED`/`FAILED`) and the outbox make the effect safe. The API returns 202/`EXECUTING`; the UI polls or subscribes.
+- **AP read plane**: CQRS/materialized views for the case list and dashboards; bounded staleness; the approval screen uses the primary or read-your-writes; a `version`/ETag lets the UI show staleness. A stale read cannot double-execute because the approval endpoint re-checks the case state, the idempotency key and the unique approval/execution constraints.
+- **Audit**: the audit row is written in the same DB transaction as the state change (CP); CDC/outbox ships it to an immutable store (S3 Object Lock) for retention/export (AP). The DB audit is the source of truth; the export is eventually consistent and idempotent.
+- **Planner**: a separate service/queue; the proposal is advisory; if it is partitioned or slow, the deterministic fallback or escalation runs; no financial state is changed.
+- **Identity**: IdP/OIDC; auth fails closed; short-lived tokens and JWKS cache; role sets and the active role are in the token; no cached authorization decisions for approvals.
+- **Multi-region**: Aurora Global Database active-passive with a controlled failover; the queue replicated; idempotency keys and the audit trail are region-aware; approvals fail closed during failover; read replicas serve the other region; define RPO/RTO.
+- **Operational controls**: timeouts, retries with jitter, circuit breakers, bulkheads, backpressure/load shedding at the gateway, rate limits, health/readiness, canary and chaos tests (DB failover, queue outage, payment-rail timeout, partition between API and DB).
+
+**Failure behavior:**
+
+| Failure | Behavior | Recovery |
+|---|---|---|
+| DB primary/partition | `/readyz` 503; no approvals/executions | Failover; clients retry with the same idempotency key |
+| Queue unavailable | Outbox backlog; cases remain pending/`EXECUTING` | Worker catches up; DLQ/replay; no duplicate |
+| Payment rail timeout | Retry with the proposal-ID idempotency key; circuit breaker | Reconcile; DLQ; case `FAILED` if exhausted |
+| Planner/LLM unavailable | Deterministic fallback or `ESCALATED` | Retry later; no financial effect |
+| Read replica lag | Stale list/dashboard; approval uses the primary | Refresh; version/ETag; write re-check |
+| Region partition | Controlled failover; approvals fail closed | RPO/RTO runbook; audit/queue replay |
+| IdP unavailable | 401/503; no approvals | JWKS cache; fail closed |
+
+**Do not:** use AP for approvals or execution intent; accept last-write-wins on case state; use distributed locks without fencing tokens; use two-phase commit across services; trust a stale read for an approval; run a queue without dedupe/DLQ; or treat the eventual audit export as the only record.
+
 ## Key trade-offs
 
 - **Deterministic planner vs LLM**: reproducible, offline, no keys; a real LLM can implement the same protocol later without changing the controls (see the LLM/AI expansion section).

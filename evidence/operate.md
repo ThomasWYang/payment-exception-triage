@@ -77,6 +77,16 @@ An identity may hold multiple roles. `X-Acting-Role` selects the active role; th
 - **Degrade**: `DEGRADED_MODE`/`AUTO_APPROVE_ENABLED=false`; pause the queue; deterministic planner fallback; shed load at the gateway.
 - **Load test**: k6/Locust triage + approval with concurrent writers; measure p95, lock errors, planner latency and queue depth. Not part of the slice.
 
+### CAP / partition behavior
+
+- **Decision/execution state is CP**: if the DB primary/quorum is unavailable, `/readyz` is 503 and approvals/executions fail closed. Never route approval writes to a read replica.
+- **Case lists/dashboards/audit export/metrics are AP**: read replicas/caches may be stale; the approval endpoint re-checks the authoritative state, idempotency key and unique constraints.
+- **Queue outage**: outbox backlog; cases remain pending/`EXECUTING`; the worker catches up; DLQ/replay; no duplicate.
+- **Payment rail timeout**: retry with the proposal-ID idempotency key; circuit breaker; reconcile; DLQ.
+- **Planner/LLM outage**: deterministic fallback or `ESCALATED`; no financial effect.
+- **Region partition**: controlled failover; approvals fail closed; follow the RPO/RTO runbook.
+- **IdP outage**: 401/503; fail closed; JWKS cache with a short TTL.
+
 ## Local to cloud
 
 See `design.md`: API Gateway/ALB → ECS or Lambda → Aurora PostgreSQL; SQS/Step Functions for the workflow; S3 Object Lock for audit; KMS/Secrets Manager; CloudWatch/OpenTelemetry; GitHub Actions → ECR → Terraform/CDK; dev → staging → prod with approvals, canary and rollback.

@@ -63,3 +63,11 @@
 **Decision:** Keep SQLite and synchronous execution for the slice. Add only the audit pagination cap (default 500, max 1000) and the `audit_events(event_type)` index. Do not add Redis, a queue or a managed DB to the slice. Document the production path: managed relational DB, outbox + queue for execution, separate planner service, Redis/gateway rate limiting/cache, aggregated metrics and immutable audit export.
 
 **Consequences:** The slice is single-writer and not horizontally scalable for writes; the executor and planner boundaries are explicit. The API/DB contracts (idempotency, unique constraints, proposal ID, audit) carry over. Production needs load tests, connection pooling, migrations, retention and queue operations.
+
+## ADR-9: CAP — CP for case/approval/execution, AP for reads and observability
+
+**Context:** Payment exceptions are financial decisions. A partition must not allow double approval/execution or an approval based on a stale case. The slice is single-node SQLite with no partition tolerance.
+
+**Decision:** In a distributed deployment, keep the case/approval/execution state CP: a quorum/primary DB, strong reads for the approval path, unique constraints/idempotency/compare-and-set, and fail closed when the primary is unavailable. Keep case lists, dashboards, metrics and audit export AP/eventually consistent via replicas/caches; the approval write re-checks the authoritative state, so stale reads cannot double-execute. Use an outbox/queue with an idempotent executor for the payment rail; the planner is advisory and falls back/escalates.
+
+**Consequences:** Approvals may be unavailable during a partition/failover; no double execution. Reads may be stale; the UI shows the source/version and the approval screen uses the primary. The queue/outbox and managed DB are production components; the slice documents them.

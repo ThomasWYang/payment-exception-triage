@@ -27,6 +27,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - "How would a real system grant multiple roles and enforce four-eye? How could this app expand to use an LLM? Document the expandability."
 - "Implement the `triage_requested_by` check. Do not oversimplify with one key per role; one user/identity should hold multiple roles. Give the API and UI at least three human users — two single-role and one dual-role — or two dual-role users who can approve each other; you decide."
 - "Think about the scalability of the app. Make only necessary code changes; if it needs external components like Redis or a queue, document the gap and the improvement path."
+- "Think about the CAP theorem; how can this app work well in a distributed system?"
 
 ## Where I intervened
 
@@ -47,6 +48,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - Documented the production multi-role/four-eye model and the LLM planner expansion (design-only) without adding a model runtime to the slice.
 - Implemented role sets and an explicit active role (`X-Acting-Role`), with one key per identity. The demo has four humans: Alice and Bob (analyst + approver), Carol (analyst-only) and Dave (approver-only), plus the agent service. The slice records `triage_requested_by` and denies the assignee or triage requester; Alice and Bob can approve each other's cases, Carol cannot approve and Dave cannot triage.
 - Added the only local scalability guards: a paginated audit response (default 500, max 1000) and an `audit_events(event_type)` index for `/status` counts. Documented the production path instead of adding external components: managed relational DB, outbox/queue for execution, separate planner service, Redis/gateway rate limits, aggregated metrics and audit export.
+- Documented the CAP choices: CP for case/approval/execution, AP for case lists/metrics/audit export; the approval path uses the primary and re-checks the state/idempotency key; the outbox/queue uses an idempotent executor; read replicas, multi-region failover and the partition failure matrix are in design.md/ADR-9. No distributed components were added to the slice.
 
 ## Code review and hardening
 

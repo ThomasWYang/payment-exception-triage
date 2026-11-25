@@ -240,6 +240,8 @@ The deterministic planner is a stand-in. An LLM can implement the same `Planner`
 
 The local slice is a single-node SQLite app with synchronous execution; it is built for a demo, not throughput. The API is stateless per request and the constraints/idempotency are real, but SQLite has one writer and the executor/planner run in-process. The audit list is paginated (default 500, max 1000) and `audit_events(event_type)` is indexed; the rest of the production path is documented in `evidence/design.md` and ADR-8: managed relational DB, outbox + queue for execution, separate planner service, Redis/gateway rate limiting, aggregated metrics and immutable audit export. The queue/outbox and managed DB are intentionally out of the slice. A k6/Locust load test with concurrent triage/approval writers is the next step.
 
+CAP: the decision/execution path is **CP** — under a partition or DB outage the API fails closed rather than accept a possibly-duplicate approval. Case lists, dashboards and audit export are **AP/eventually consistent**; the approval write re-checks the authoritative state and idempotency key, so a stale read cannot double-execute. Production uses a quorum DB, an outbox/queue with an idempotent executor and a separate planner service. See `evidence/design.md` and ADR-9.
+
 ### Evidence pack
 
 - [`evidence/intent.md`](evidence/intent.md) — problem, users, assumptions, success criteria
