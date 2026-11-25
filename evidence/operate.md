@@ -69,6 +69,14 @@ An identity may hold multiple roles. `X-Acting-Role` selects the active role; th
 - Code rollback: redeploy the previous version; the schema is additive and `PRAGMA user_version` is set. The UI is versioned with the API in the same repo, so a rollback restores the matching `ui/dist`. Production would use expand/contract migrations.
 - The executor is a mock; no money moves.
 
+## Capacity and scaling
+
+- **Local**: one uvicorn process is the safe default for write-heavy use; multiple workers share SQLite and serialize writes. WAL allows concurrent reads. `busy_timeout` is 5s; `database is locked` means reduce write concurrency or move to a managed DB.
+- **Watch**: `/status` counts, DB lock errors, p95 triage/approval latency, planner timeouts, audit table growth, idempotency key growth, and (future) queue depth.
+- **Scale out (production)**: stateless API replicas behind ALB; Aurora PostgreSQL; outbox + SQS/Step Functions workers for execution; separate LLM planner service; Redis/gateway rate limits and cache; Prometheus/OpenTelemetry; S3 Object Lock audit export; DLQ and replay.
+- **Degrade**: `DEGRADED_MODE`/`AUTO_APPROVE_ENABLED=false`; pause the queue; deterministic planner fallback; shed load at the gateway.
+- **Load test**: k6/Locust triage + approval with concurrent writers; measure p95, lock errors, planner latency and queue depth. Not part of the slice.
+
 ## Local to cloud
 
 See `design.md`: API Gateway/ALB → ECS or Lambda → Aurora PostgreSQL; SQS/Step Functions for the workflow; S3 Object Lock for audit; KMS/Secrets Manager; CloudWatch/OpenTelemetry; GitHub Actions → ECR → Terraform/CDK; dev → staging → prod with approvals, canary and rollback.

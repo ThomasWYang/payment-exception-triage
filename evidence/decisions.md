@@ -55,3 +55,11 @@
 **Decision:** Keep the `Planner` protocol as the seam. An LLM planner runs out of process, uses the read-only tool gateway, returns a schema-validated proposal with evidence refs, and is wrapped by confidence/abstain and deterministic fallback. The policy engine, approval, separation of duties, idempotency, executor and audit remain service-side and model-agnostic. Roll out shadow → LLM-assisted with human approval → multi-step read-only agent, gated by evals, canary and a kill switch.
 
 **Consequences:** The slice stays deterministic and key-free; the controls do not change when the model changes. LLM-specific work: prompt-injection defenses, PII redaction, evidence grounding, model/prompt versioning, cost/latency budgets, adversarial/grounding evals, vendor/DPIA. The LLM never executes, approves or becomes the audit source.
+
+## ADR-8: Scalability — local SQLite/synchronous slice, managed DB + outbox/queue in production
+
+**Context:** The slice must run locally with zero setup and fit a 3-hour build. Triage and approval are write-heavy; the executor is a mock; the planner is deterministic.
+
+**Decision:** Keep SQLite and synchronous execution for the slice. Add only the audit pagination cap (default 500, max 1000) and the `audit_events(event_type)` index. Do not add Redis, a queue or a managed DB to the slice. Document the production path: managed relational DB, outbox + queue for execution, separate planner service, Redis/gateway rate limiting/cache, aggregated metrics and immutable audit export.
+
+**Consequences:** The slice is single-writer and not horizontally scalable for writes; the executor and planner boundaries are explicit. The API/DB contracts (idempotency, unique constraints, proposal ID, audit) carry over. Production needs load tests, connection pooling, migrations, retention and queue operations.

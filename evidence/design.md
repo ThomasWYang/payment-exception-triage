@@ -98,7 +98,7 @@ All money is integer cents; currency is AUD only; timestamps are UTC ISO 8601.
 | `GET` | `/v1/cases/{id}` | ANALYST / APPROVER | Case view |
 | `GET` | `/v1/cases?status=...` | ANALYST / APPROVER | List / approval queue |
 | `POST` | `/v1/cases/{id}/approve` | APPROVER | Approve/reject; `Idempotency-Key` required |
-| `GET` | `/v1/cases/{id}/audit` | ANALYST / APPROVER | Audit trail |
+| `GET` | `/v1/cases/{id}/audit` | ANALYST / APPROVER | Audit trail; paginated (`limit` default 500, max 1000; `offset`) |
 | `GET` | `/healthz`, `/readyz`, `/status` | public (local) | Liveness, readiness, counters and policy caps |
 
 The create-case request does not accept an assignee; the server sets it to the creating analyst. Business outcomes (policy rejection, escalation, executor failure) return 200 with the case status and reason codes. Transport/auth/validation errors use 4xx/5xx with a consistent error envelope. An identity can hold multiple roles; `X-Acting-Role` selects the active role, the service records it, and a mismatch with the endpoint's required role is rejected.
@@ -157,6 +157,21 @@ The slice records `triage_requested_by` and denies an approver who is the case a
 - Oversized request → 413; chunked request → 411; no side effect.
 - Approval rationale is redacted and truncated to the field limit.
 - Audit is append-only; UPDATE/DELETE/REPLACE are blocked at the database.
+
+## Scalability
+
+The local slice is a single-node FastAPI + SQLite app, built for a local demo, not throughput. The API is stateless per request (a DB connection per request); SQLite uses WAL and `BEGIN IMMEDIATE` for writes; the case list is capped at 100; the request body is capped; unique constraints and idempotency keys prevent duplicate effects. The limits:
+
+- **SQLite has a single writer.** WAL allows concurrent readers, but writes serialize; `busy_timeout` is 5s; multiple API workers share the file and can see `database is locked` under contention. Production: a managed relational database (Aurora PostgreSQL) with row-level locking, connection pooling and migrations.
+- **Execution runs inside the DB transaction.** The mock executor is instant; a real payment call would hold the write lock. Production: commit an outbox row with the approval, have an SQS/Step Functions/Kafka worker execute with the proposal ID as the idempotency key, retry/DLQ, and return `EXECUTING`/202 to the client. The worker updates the case; the UI polls.
+- **The planner runs in a thread per triage.** A slow or LLM planner consumes a request thread; the timeout cannot kill the thread. Production: a separate planner service/queue with concurrency limits, circuit breaker, deterministic fallback and time/cost budgets.
+- **The case list is N+1.** `list_case_views` fetches each case's proposal, approval and execution separately; the list is capped at 100. Production: a join/batch query or a read model.
+- **The audit is append-only and grows.** The response is now paginated (default 500, max 1000) and `audit_events(event_type)` is indexed for `/status` counts; the table still needs retention/export. Production: partition by case/time, export to S3 Object Lock, retention policy.
+- **Idempotency keys do not expire.** The table grows; production adds TTL/archival while the unique constraint remains the source of truth.
+- **`/status` counters are per process.** Multiple workers show their own counts; production aggregates metrics in Prometheus/OpenTelemetry and keeps `/status` as a local view.
+- **The UI calls the API directly with demo keys.** Production: SSO + BFF, pagination/caching, no service keys in the browser.
+
+The only local code changes made for scalability are the audit pagination cap and the audit event-type index. The managed DB, queue/outbox, Redis (rate limiting/cache/hot idempotency) and a separate LLM planner service are external components, intentionally out of the slice. A k6/Locust load test with concurrent triage/approval writers is the next step; watch p95, DB lock errors, planner latency, audit growth and queue depth.
 
 ## Key trade-offs
 
@@ -217,4 +232,4 @@ The `ui/` folder contains a small React/Vite client that calls the JSON API and 
 - Real payment rails, real money, multi-currency/FX, partial refunds.
 - A real LLM runtime or external model provider; the expansion path is documented above.
 - Full IdP/OAuth, multi-level approval chains, delegated authority; the production multi-role/four-eye model is documented above.
-- Cloud deployment, Docker packaging, rate limiting, background workers, event sourcing.
+- Cloud deployment, Docker packaging, rate limiting, background workers, event sourcing, a managed database, an outbox/queue and Redis. The scalability section documents the production path.
