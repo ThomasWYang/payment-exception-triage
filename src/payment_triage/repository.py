@@ -261,9 +261,13 @@ class Repository:
         )
         return int(cursor.lastrowid or 0)
 
-    def list_audit(self, case_id: str) -> list[AuditEvent]:
+    def list_audit(
+        self, case_id: str, limit: int = 500, offset: int = 0
+    ) -> list[AuditEvent]:
         rows = self.conn.execute(
-            "SELECT * FROM audit_events WHERE case_id = ? ORDER BY id", (case_id,)
+            """SELECT * FROM audit_events
+               WHERE case_id = ? ORDER BY id LIMIT ? OFFSET ?""",
+            (case_id, limit, offset),
         ).fetchall()
         return [_audit_from_row(row) for row in rows]
 

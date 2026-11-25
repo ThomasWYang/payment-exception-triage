@@ -293,6 +293,8 @@ class AuditList(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[AuditEvent]
+    limit: int = 500
+    offset: int = 0
 
 
 class ErrorDetail(BaseModel):

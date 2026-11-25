@@ -109,6 +109,8 @@ export interface AuditEvent {
 
 export interface AuditList {
   items: AuditEvent[];
+  limit: number;
+  offset: number;
 }
 
 export interface ServiceStatus {

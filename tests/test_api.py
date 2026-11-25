@@ -304,6 +304,29 @@ def test_self_approval_api(client: TestClient, settings: Settings) -> None:
     assert approved.json()["case"]["status"] == "EXECUTED"
 
 
+def test_audit_pagination(client: TestClient, settings: Settings) -> None:
+    _seed_payment(settings, amount=25000)
+    case_id = _create_case(client)
+    client.post(f"/v1/cases/{case_id}/triage", headers=ALICE_ANALYST)
+    first = client.get(
+        f"/v1/cases/{case_id}/audit?limit=1&offset=0", headers=ALICE_ANALYST
+    )
+    assert first.status_code == 200
+    body = first.json()
+    assert body["limit"] == 1
+    assert body["offset"] == 0
+    assert len(body["items"]) == 1
+    second = client.get(
+        f"/v1/cases/{case_id}/audit?limit=1&offset=1", headers=ALICE_ANALYST
+    )
+    assert second.status_code == 200
+    assert second.json()["items"][0]["id"] != body["items"][0]["id"]
+    too_large = client.get(
+        f"/v1/cases/{case_id}/audit?limit=1001", headers=ALICE_ANALYST
+    )
+    assert too_large.status_code == 422
+
+
 def test_cors_preflight(client: TestClient) -> None:
     response = client.options(
         "/v1/cases",

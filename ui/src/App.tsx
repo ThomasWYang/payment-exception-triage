@@ -94,7 +94,7 @@ type PendingApproval = {
   decision: "APPROVE" | "REJECT";
   idempotencyKey: string;
 };
-type AuditState = { caseId: string; events: AuditEvent[] };
+type AuditState = { caseId: string; events: AuditEvent[]; limit: number };
 type DetailsState = { view: CaseView };
 
 function statusClass(status: string): string {
@@ -209,7 +209,7 @@ export default function App() {
   async function openAudit(caseId: string) {
     try {
       const result = await getAudit(caseId, identity);
-      setAudit({ caseId, events: result.items });
+      setAudit({ caseId, events: result.items, limit: result.limit });
     } catch (err) {
       setError(formatError(err));
     }
@@ -792,6 +792,12 @@ function AuditModal({
             </li>
           ))}
         </ol>
+        {audit.events.length >= audit.limit && (
+          <p className="muted">
+            Showing the first {audit.limit} events. Use the API with offset to
+            page further.
+          </p>
+        )}
         <div className="modal-actions">
           <button className="secondary" onClick={onClose}>
             Close

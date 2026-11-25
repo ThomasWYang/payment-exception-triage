@@ -340,10 +340,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/cases/{case_id}/audit", response_model=AuditList)
     def audit(
         case_id: str,
+        limit: int = Query(default=500, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
         identity: Identity = Depends(require_any_role(Role.ANALYST, Role.APPROVER)),
         workflow: Workflow = Depends(get_workflow),
     ) -> AuditList:
-        return AuditList(items=workflow.get_audit(case_id))
+        return AuditList(
+            items=workflow.get_audit(case_id, limit=limit, offset=offset),
+            limit=limit,
+            offset=offset,
+        )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

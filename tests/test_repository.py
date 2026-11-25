@@ -180,6 +180,18 @@ def test_audit_is_append_only(repo) -> None:
         repo.conn.execute("DELETE FROM audit_events WHERE id = ?", (event_id,))
 
 
+def test_list_audit_pagination(repo) -> None:
+    repo.create_account(_account())
+    repo.create_payment(_payment())
+    repo.create_case(_case())
+    first_id = repo.append_audit(_audit())
+    second_id = repo.append_audit(_audit())
+    first_page = repo.list_audit("CASE-1", limit=1, offset=0)
+    second_page = repo.list_audit("CASE-1", limit=1, offset=1)
+    assert [event.id for event in first_page] == [first_id]
+    assert [event.id for event in second_page] == [second_id]
+
+
 def test_idempotency_roundtrip(repo) -> None:
     repo.save_idempotency("key-1", "hash-1", 200, '{"ok":true}')
     stored = repo.get_idempotency("key-1")

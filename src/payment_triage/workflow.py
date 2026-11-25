@@ -483,10 +483,12 @@ class Workflow:
         cases = self.repo.list_cases(status, limit=limit, offset=offset)
         return [self.get_case_view(case.id) for case in cases]
 
-    def get_audit(self, case_id: str) -> list[AuditEvent]:
+    def get_audit(
+        self, case_id: str, limit: int = 500, offset: int = 0
+    ) -> list[AuditEvent]:
         if self.repo.get_case(case_id) is None:
             raise WorkflowError("CASE_NOT_FOUND", "Case not found", 404)
-        return self.repo.list_audit(case_id)
+        return self.repo.list_audit(case_id, limit=limit, offset=offset)
 
     def status(self) -> dict[str, object]:
         return {

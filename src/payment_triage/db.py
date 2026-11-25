@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
 
 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
 CREATE INDEX IF NOT EXISTS idx_audit_case ON audit_events(case_id, id);
+CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_approvals_case ON approvals(case_id);
 """
 
@@ -137,4 +138,4 @@ def init_schema(conn: sqlite3.Connection) -> None:
     if "triage_requested_by" not in columns:
         conn.execute("ALTER TABLE cases ADD COLUMN triage_requested_by TEXT")
     conn.executescript(AUDIT_TRIGGERS)
-    conn.execute("PRAGMA user_version = 2")
+    conn.execute("PRAGMA user_version = 3")

@@ -25,7 +25,7 @@ The screen includes:
 - roles and rules panels;
 - the sample cases and expected outcomes;
 - case details (rationale, evidence, triage requester, approval, execution);
-- the append-only audit trail.
+- the append-only audit trail (paginated; the modal shows the first 500 events).
 
 ## Develop
 
