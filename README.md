@@ -113,7 +113,7 @@ No `.env` is required. `env.example` documents optional overrides.
 2. Switch to **Dave (approver)** and approve `CASE-1009`; it executes. Carol has no approval actions; Dave has no Triage button.
 3. Switch to **Bob (analyst)** and triage `CASE-1010` (Bob's case); switch to **Alice (approver)** and approve it. Alice and Bob can approve each other's cases.
 4. Switch to **Alice (analyst)** and triage `CASE-1002` (Alice's case); switch to **Alice (approver)** and try to approve: denied with `SELF_APPROVAL_DENIED` and `TRIAGE_REQUESTER_CANNOT_APPROVE`. Switch to **Bob (approver)** and approve it.
-5. Switch to **Carol (analyst)** and triage `CASE-1006` (Dave's duplicate) and `CASE-1007` (Dave's dispute); switch to **Bob (approver)** and approve both. Dave owns them but cannot triage (approver-only) or approve them (assignee). Then triage `CASE-1008` (Alice's over-cap) and `CASE-1004` (Bob's closed account); both escalate.
+5. Switch to **Carol (analyst)** and triage `CASE-1006` (Dave's duplicate) and `CASE-1007` (Dave's dispute); switch to **Bob (approver)** and approve both. Dave owns them but cannot triage (approver-only) or approve them (assignee). Switch back to **Carol (analyst)** and triage `CASE-1008` (Alice's over-cap) and `CASE-1004` (Bob's closed account); both escalate.
 6. The UI reuses one idempotency key per approval dialog, so a double-click or retry cannot double-execute. The server tests and `scripts/demo.py` also demonstrate the replay.
 
 ## What the UI shows
