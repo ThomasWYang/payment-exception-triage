@@ -43,20 +43,41 @@ The UI reads the live auto-retry limit, refund cap and mode from `/status` — t
 
 ## Sample cases
 
-The seed creates ten open cases. The UI's **Sample cases** panel shows the same guide. Match the IDs to see the expected outcomes.
+The seed creates ten open cases, assigned across all four humans. The UI's **Sample cases** panel shows the same guide, including the owner. Match the IDs to see the expected outcomes.
 
-| Case | Scenario | Amount | Expected outcome |
-|---|---|---|---|
-| `CASE-1001` | Temporary error, active account | $250 | Auto-retry → **EXECUTED** |
-| `CASE-1002` | Temporary error, above the auto-retry limit | $5,000 | `RETRY` pending → approve → **EXECUTED** |
-| `CASE-1003` | Insufficient funds | $1,200 | `HOLD` auto → **EXECUTED** |
-| `CASE-1004` | Account closed | $900 | **ESCALATED** |
-| `CASE-1005` | Limit exceeded | $3,000 | **ESCALATED** |
-| `CASE-1006` | Duplicate of `PAY-1000` | $1,500 | `REFUND_REQUEST` pending → approve → **EXECUTED** |
-| `CASE-1007` | Customer dispute | $2,500 | `REFUND_REQUEST` pending → approve → **EXECUTED** |
-| `CASE-1008` | Customer dispute over the refund cap | $20,000 | **ESCALATED** |
-| `CASE-1009` | Carol's case (analyst-only owner) | $5,000 | `RETRY` pending → approve → **EXECUTED** |
-| `CASE-1010` | Bob's case (dual-role owner) | $5,000 | `RETRY` pending → approve → **EXECUTED** |
+| Case | Owner | Scenario | Amount | Expected outcome |
+|---|---|---|---|---|
+| `CASE-1001` | Carol | Temporary error, active account | $250 | Auto-retry → **EXECUTED** |
+| `CASE-1002` | Alice | Temporary error, above the auto-retry limit | $5,000 | `RETRY` pending → approve → **EXECUTED** |
+| `CASE-1003` | Dave | Insufficient funds | $1,200 | `HOLD` auto → **EXECUTED** |
+| `CASE-1004` | Bob | Account closed | $900 | **ESCALATED** |
+| `CASE-1005` | Alice | Limit exceeded | $3,000 | **ESCALATED** |
+| `CASE-1006` | Dave | Duplicate of `PAY-1000` | $1,500 | `REFUND_REQUEST` pending → approve → **EXECUTED** |
+| `CASE-1007` | Dave | Customer dispute | $2,500 | `REFUND_REQUEST` pending → approve → **EXECUTED** |
+| `CASE-1008` | Alice | Customer dispute over the refund cap | $20,000 | **ESCALATED** |
+| `CASE-1009` | Carol | Temporary error, above the auto-retry limit | $5,000 | `RETRY` pending → approve → **EXECUTED** |
+| `CASE-1010` | Bob | Temporary error, above the auto-retry limit | $5,000 | `RETRY` pending → approve → **EXECUTED** |
+
+### Case ownership, triage requester and approver
+
+Each case has three distinct human concepts:
+
+- **Assignee** — the human who owns and handles the case. In this slice it is the analyst who created the case; the server sets it and clients cannot choose it. The assignee is not an approval role.
+- **Triage requester** — the human analyst or agent service that requested triage; recorded in `triage_requested_by`. Any analyst (or the agent service) can request triage on any OPEN case, not just the assignee. The assignee remains the owner.
+- **Approver** — a different human acting with the APPROVER role. The approver must not be the assignee or the triage requester: the service denies `SELF_APPROVAL_DENIED` or `TRIAGE_REQUESTER_CANNOT_APPROVE`.
+
+The seed spreads the ten cases across all four humans so the combinations are visible:
+
+| Owner | Cases | Demonstrates |
+|---|---|---|
+| Alice (analyst + approver) | 1002, 1005, 1008 | Owns cases; can triage and approve other people's cases; cannot approve her own or a case she requested triage for |
+| Bob (analyst + approver) | 1004, 1010 | Same cross-approval boundary |
+| Carol (analyst only) | 1001, 1009 | Can request triage; cannot approve |
+| Dave (approver only) | 1003, 1006, 1007 | Cannot triage; can approve other people's cases; cannot approve his own |
+
+Examples: Carol requests triage on `CASE-1009` and Dave approves it; Bob requests triage on `CASE-1010` and Alice approves it; Alice requests triage on `CASE-1002` and is denied, so Bob approves; Dave owns `CASE-1006`/`CASE-1007` but cannot triage, so Carol requests and Bob approves; Dave owns `CASE-1003`, another analyst requests triage, and the hold auto-executes.
+
+Why any analyst can triage: triage only gathers evidence and produces a proposal; it cannot execute or approve. Recording who requested it is what makes the four-eye check meaningful. A stricter production policy could restrict triage to the assignee, team or queue.
 
 ## Quick start (UI)
 
@@ -92,7 +113,7 @@ No `.env` is required. `env.example` documents optional overrides.
 2. Switch to **Dave (approver)** and approve `CASE-1009`; it executes. Carol has no approval actions; Dave has no Triage button.
 3. Switch to **Bob (analyst)** and triage `CASE-1010` (Bob's case); switch to **Alice (approver)** and approve it. Alice and Bob can approve each other's cases.
 4. Switch to **Alice (analyst)** and triage `CASE-1002` (Alice's case); switch to **Alice (approver)** and try to approve: denied with `SELF_APPROVAL_DENIED` and `TRIAGE_REQUESTER_CANNOT_APPROVE`. Switch to **Bob (approver)** and approve it.
-5. Switch to **Carol (analyst)** and triage `CASE-1006` (duplicate) and `CASE-1007` (dispute); switch to Dave or Bob and approve both. Triage `CASE-1008` (over cap) and `CASE-1004` (closed account); both escalate.
+5. Switch to **Carol (analyst)** and triage `CASE-1006` (Dave's duplicate) and `CASE-1007` (Dave's dispute); switch to **Bob (approver)** and approve both. Dave owns them but cannot triage (approver-only) or approve them (assignee). Then triage `CASE-1008` (Alice's over-cap) and `CASE-1004` (Bob's closed account); both escalate.
 6. The UI reuses one idempotency key per approval dialog, so a double-click or retry cannot double-execute. The server tests and `scripts/demo.py` also demonstrate the replay.
 
 ## What the UI shows
@@ -102,7 +123,7 @@ No `.env` is required. `env.example` documents optional overrides.
 - **Rules** — the live auto-retry limit and refund cap from `/status`, plus the fixed controls.
 - **Sample cases** — the table above.
 - **Case table** — status, proposal action, policy outcome and reason codes.
-- **Details** — the proposal rationale, evidence references, triage requester, approval and execution.
+- **Details** — the proposal rationale, evidence references, assignee, triage requester, approval and execution.
 - **Audit** — the append-only event trail.
 - **Status bar** — mode, case counts, auto-retry limit and refund cap.
 

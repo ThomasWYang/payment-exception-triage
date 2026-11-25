@@ -53,3 +53,4 @@ An AI agent can gather evidence and propose an action, but it must not be truste
 - One identity can hold multiple roles; the active role is explicit and recorded. The approver cannot be the case assignee or the triage requester; Alice and Bob can approve each other's cases, Carol cannot approve and Dave cannot triage.
 - The audit response is bounded and the scalability limits and production path are documented (`design.md`, ADR-3, `operate.md`).
 - The CAP choices and distributed failure behavior are documented: CP for case/approval/execution, AP for reads/observability (`design.md`, ADR-3).
+- The seeded cases are owned across all four humans, and the assignee/triage-requester/approver combinations are documented and tested.
