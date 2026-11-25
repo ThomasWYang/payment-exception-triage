@@ -42,10 +42,10 @@ Append-only audit + JSON logs + /healthz /readyz /status
 ## Data flow
 
 1. An analyst creates a case for a synthetic payment.
-2. The agent calls triage. The planner reads payment/account/policy evidence through the tool gateway.
+2. An analyst (or the agent service) requests triage; the service records `triage_requested_by`. The planner reads payment/account/policy evidence through the tool gateway.
 3. The planner returns a proposal with rationale and evidence references.
 4. The policy engine validates the proposal and returns an outcome.
-5. Auto-approved actions execute immediately. Financial/higher-risk actions wait for an approver.
+5. Auto-approved actions execute immediately. Financial/higher-risk actions wait for a different human approver.
 6. The mock executor writes an execution record; the case moves to a terminal state.
 7. Every step writes an audit event and a structured log line.
 
@@ -69,7 +69,7 @@ All money is integer cents; currency is AUD only; timestamps are UTC ISO 8601.
 |---|---|---|
 | `payments` | Synthetic payments | `amount_cents > 0`, currency `AUD`, status `FAILED`/`SETTLED` |
 | `accounts` | Synthetic accounts | status `ACTIVE`/`CLOSED`/`BLOCKED` |
-| `cases` | Triage cases | `UNIQUE(payment_id)`, FK to payments |
+| `cases` | Triage cases | `UNIQUE(payment_id)`, FK to payments, `triage_requested_by` (nullable) |
 | `proposals` | Planner proposals + policy outcome | `UNIQUE(case_id)` |
 | `approvals` | Human decisions | `UNIQUE(proposal_id)` |
 | `executions` | Mock execution results | `UNIQUE(proposal_id)` (prevents double execution) |
@@ -94,14 +94,14 @@ All money is integer cents; currency is AUD only; timestamps are UTC ISO 8601.
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | `POST` | `/v1/cases` | ANALYST | Create a case |
-| `POST` | `/v1/cases/{id}/triage` | AGENT | Run planner + policy |
+| `POST` | `/v1/cases/{id}/triage` | ANALYST / AGENT | Request triage; run planner + policy |
 | `GET` | `/v1/cases/{id}` | ANALYST / APPROVER | Case view |
 | `GET` | `/v1/cases?status=...` | ANALYST / APPROVER | List / approval queue |
 | `POST` | `/v1/cases/{id}/approve` | APPROVER | Approve/reject; `Idempotency-Key` required |
 | `GET` | `/v1/cases/{id}/audit` | ANALYST / APPROVER | Audit trail |
 | `GET` | `/healthz`, `/readyz`, `/status` | public (local) | Liveness, readiness, counters and policy caps |
 
-The create-case request does not accept an assignee; the server sets it to the creating analyst. Business outcomes (policy rejection, escalation, executor failure) return 200 with the case status and reason codes. Transport/auth/validation errors use 4xx/5xx with a consistent error envelope.
+The create-case request does not accept an assignee; the server sets it to the creating analyst. Business outcomes (policy rejection, escalation, executor failure) return 200 with the case status and reason codes. Transport/auth/validation errors use 4xx/5xx with a consistent error envelope. An identity can hold multiple roles; `X-Acting-Role` selects the active role, the service records it, and a mismatch with the endpoint's required role is rejected.
 
 ## Policy, roles and separation of duties
 
@@ -110,13 +110,14 @@ The create-case request does not accept an assignee; the server sets it to the c
 - Refund amount > 0, ≤ original settled amount, ≤ the refund cap, and the account must be active.
 - Retry only for failed, retryable payments on active accounts; amount fixed to the original.
 - Refunds always require approval; retries above the auto-retry limit require approval.
-- The approver must hold the `APPROVER` role and must not be the case assignee.
+- The approver must hold the `APPROVER` role and must not be the case assignee or the triage requester.
+- A user may hold both analyst and approver roles; the active role is explicit and recorded. SoD is checked on the actor and case participation.
 - Duplicate approval/execution replays the prior result.
 - Degraded mode / `AUTO_APPROVE_ENABLED=false` forces approval for retries, refunds and holds.
 
 ## Production identity, multi-role and four-eye
 
-The slice gives each API key one role and uses two keys for the same actor (`user:alice`: `analyst-key` and `approver-alice-key`) to demonstrate multi-role and separation of duties. Production would model roles differently:
+The slice models roles as a set on one identity: Alice and Bob hold analyst + approver, Carol is analyst-only, Dave is approver-only, and the agent service holds `AGENT`. Each identity has one key; the UI selects the active role and the API records it. Production would source the role set from the IdP rather than the local key map, but the shape is the same.
 
 - **Roles are a set from the IdP**, not one credential per role. The token carries `sub` and `roles`; the service checks membership and requires an explicit active role for the action (or derives it from the endpoint and records it). The active role is shown in the UI and written to the audit. Do not silently pick the highest privilege. Example: `roles={"analyst","approver"}`, `active_role="approver"`.
 - **Service identities are separate.** The agent/scheduler has a dedicated `AGENT`/`SERVICE` identity with read-and-propose only. It never holds an analyst or approver role. If it creates cases, it does so as a service actor and the case is assigned to a human or queue.
@@ -125,14 +126,14 @@ The slice gives each API key one role and uses two keys for the same actor (`use
 - **No independent approver**: leave the case pending or escalate; do not allow self-approval. A break-glass path needs a second approver or supervisor and a specific audit event.
 - **Operations**: periodic access reviews, least privilege, separate human/service accounts, monitoring for toxic combinations, and a queue for small teams.
 
-The slice's check is `approver.actor != case.assignee` (`policy.py`). It is sufficient for the seeded single-analyst demo: every case is assigned to `user:alice`, so her approver credential is denied and Bob can approve. It does not record a human triage requester when the UI uses the agent key, and it does not check proposal editors. Production would extend the check to the participant history above; this is a deliberate slice simplification.
+The slice records `triage_requested_by` and denies an approver who is the case assignee or the triage requester (`policy.py`). That covers the seeded single- and multi-role demos: Alice and Bob can approve each other's cases, but neither can approve their own or a case they requested triage for; Carol cannot approve; Dave cannot triage. It does not check proposal editors or beneficiaries. Production would extend the check to the full participant history above.
 
 ## Security and privacy
 
 - The agent has no execute tool; only read-only tools are exposed.
 - The gateway keeps the repository private and exposes only the read tools; the deterministic planner is trusted code. An untrusted/LLM planner should run out of process.
 - Policy is enforced in the service, not in a prompt.
-- Synthetic API keys map to actor/role; production uses the enterprise IdP/OAuth.
+- Synthetic API keys map to an actor and a role set; the request selects the active role. Production uses the enterprise IdP/OAuth and records the active role.
 - Parameterized SQL, Pydantic validation and a request-size limit.
 - Requests must carry Content-Length; chunked bodies are rejected. The local guard is a backstop; production enforces the limit at the API gateway/WAF.
 - PII redaction before logging or storing free text.
@@ -209,7 +210,7 @@ API Gateway/ALB → ECS Fargate or Lambda → Aurora PostgreSQL; SQS/Step Functi
 
 ## React UI (primary demo surface)
 
-The `ui/` folder contains a small React/Vite client that calls the JSON API and is the primary way to explore the app. The built assets are committed in `ui/dist` and served by FastAPI at `/ui/`, so running the demo needs only Python; Node 22+ is required only to rebuild. The screen explains the three-step flow, roles, rules, sample cases and expected outcomes, and shows case details, evidence, approval and audit. It reads the live auto-retry limit, refund cap and mode from `/status`. Triage is offered to the analyst role; approval actions are offered to approver roles. It reuses one idempotency key per pending approval. It is a demo client only; it uses the synthetic demo keys, and the API remains the security boundary. Production would use SSO and a backend-for-frontend, never service keys in the browser. The core API and demo do not depend on the UI, but the UI is the recommended walkthrough.
+The `ui/` folder contains a small React/Vite client that calls the JSON API and is the primary way to explore the app. The built assets are committed in `ui/dist` and served by FastAPI at `/ui/`, so running the demo needs only Python; Node 22+ is required only to rebuild. The screen has a user selector and an active-role selector: Alice and Bob are analyst + approver, Carol is analyst-only, Dave is approver-only. It explains the three-step flow, roles, rules, sample cases and expected outcomes, and shows case details, evidence, the triage requester, approval and audit. It reads the live auto-retry limit, refund cap and mode from `/status`. Triage is offered when the active role is analyst; approval actions when it is approver. It reuses one idempotency key per pending approval. It is a demo client only; it uses the synthetic demo keys, and the API remains the security boundary. Production would use SSO and a backend-for-frontend, never service keys in the browser. The core API and demo do not depend on the UI, but the UI is the recommended walkthrough.
 
 ## What was intentionally not built
 

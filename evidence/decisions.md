@@ -20,7 +20,7 @@
 
 **Context:** Not every action needs a human, but financial actions do.
 
-**Decision:** Low-risk retries auto-approve; refunds and higher-risk retries require an approver who is not the case assignee.
+**Decision:** Low-risk retries auto-approve; refunds and higher-risk retries require an approver who is not the case assignee or the triage requester.
 
 **Consequences:** Faster low-risk handling; stronger control on money movement. One approval level only in this slice. Execution is at-least-once at the workflow boundary; the executor receives the proposal ID as a durable idempotency key and must dedupe. The mock is pure; production would use an outbox for exactly-once semantics.
 
@@ -42,11 +42,11 @@
 
 ## ADR-6: Multi-role identities and four-eye approval
 
-**Context:** Real staff can hold multiple roles; the slice gives each key one role and uses two keys for the same actor (`user:alice`) to test separation of duties. A user with analyst and approver roles could otherwise create or triage a case and then approve it.
+**Context:** Real staff can hold multiple roles; the slice models one key per identity with a role set and an explicit active role. Alice and Bob hold analyst + approver, Carol is analyst-only and Dave is approver-only. A user with both roles could otherwise create or triage a case and then approve it.
 
-**Decision:** In production, source a role set from the IdP and require an explicit active role per action. Use a separate service identity for the agent/scheduler with read-and-propose only. Record case participants (`created_by`, `assigned_to`, `triage_requested_by`, `proposed_by`, `approved_by`) and require the approver to be a human who is not the creator, assignee, triage requester, proposer or editor. No self-approval; if no independent approver is available, leave the case pending/escalated; a break-glass path needs a second approver or supervisor and a specific audit event. The slice's `approver.actor != case.assignee` check is a proxy for the seeded single-analyst demo.
+**Decision:** Model roles as a set; require the active role to match the endpoint and record it. Use a separate service identity for the agent/scheduler with read-and-propose only. Record `triage_requested_by` and deny an approver who is the assignee or the triage requester. No self-approval; if no independent approver is available, leave the case pending/escalated; a break-glass path needs a second approver or supervisor and a specific audit event. The slice covers the assignee and triage requester; production adds proposal editors and beneficiaries.
 
-**Consequences:** Holding both roles is not itself a violation, but the same actor cannot be both maker and checker for the same case. The audit records the active role and actor. Production needs participant history, access reviews, separate service accounts and an approval queue for small teams.
+**Consequences:** Alice and Bob can approve each other's cases but not their own or a case they requested triage for; Carol cannot approve; Dave cannot triage. Holding both roles is not itself a violation; the boundary is actor identity and case participation. The audit records the active role and actor. Production needs the full participant history, access reviews, separate service accounts and an approval queue for small teams.
 
 ## ADR-7: LLM planner behind the same guardrails
 

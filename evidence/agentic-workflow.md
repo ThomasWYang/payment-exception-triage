@@ -25,6 +25,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - "Address all valid findings when the code-review agent comes back and update docs if necessary."
 - "Restructure the README so both technical and business people understand the app: what each role does, the rules, and what each sample case does. Do not make the UI optional — it is the easiest way to test and understand the app. Improve the UI/UX so it is understandable without reading the full README."
 - "How would a real system grant multiple roles and enforce four-eye? How could this app expand to use an LLM? Document the expandability."
+- "Implement the `triage_requested_by` check. Do not oversimplify with one key per role; one user/identity should hold multiple roles. Give the API and UI at least three human users — two single-role and one dual-role — or two dual-role users who can approve each other; you decide."
 
 ## Where I intervened
 
@@ -43,6 +44,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - Added CORS and static serving for the separate React client; the API remains the security boundary.
 - After the first review, made the UI the primary demo surface rather than optional: committed the built `ui/dist`, added an on-screen guide for the flow, roles, rules and sample cases, exposed the live policy caps on `/status`, gated Triage to the analyst role, and restructured the README business-first.
 - Documented the production multi-role/four-eye model and the LLM planner expansion (design-only) without adding a model runtime to the slice.
+- Implemented role sets and an explicit active role (`X-Acting-Role`), with one key per identity. The demo has four humans: Alice and Bob (analyst + approver), Carol (analyst-only) and Dave (approver-only), plus the agent service. The slice records `triage_requested_by` and denies the assignee or triage requester; Alice and Bob can approve each other's cases, Carol cannot approve and Dave cannot triage.
 
 ## Code review and hardening
 
@@ -68,11 +70,12 @@ Deliberate dispositions (documented, not changed):
 - Every phase ends with a diff review and a commit.
 - Tests are the oracle: a policy rule is not considered implemented until a failing test exists and passes.
 - The golden-case eval gates regressions with exact expected outcomes and zero forbidden executions.
-- Every code commit from the original build was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 121 after the UI/CORS and code-review hardening, and 122 after the UI asset-serving test. All passed.
+- Every code commit from the original build was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 121 after the UI/CORS and code-review hardening, 122 after the UI asset-serving test, and 132 after multi-role identities, active roles and the triage-requester check. All passed.
 - A mutation check breaks a rule in a temporary copy and confirms tests fail.
 - A fresh public clone was verified end-to-end: verify, demo, UI build and UI smoke (including the referenced assets).
 - GitHub Actions is green, including the code-review fix commit and the UI-primary commit (`45588435963`).
-- The UI/README restructure was verified by `npm run build`, `ruff` + `pytest` (122 passed), a fresh clone and CI.
+- The UI/README restructure was verified by `npm run build`, `ruff` + `pytest`, a fresh clone and CI.
+- The multi-role/triage-requester implementation was verified by `ruff` + `pytest` (132 passed), the 30-case golden eval, the demo (including cross-approval, single-role approval and the triage-requester denial), the UI build and CI.
 - Subagents (when used) produce drafts only; I review, run and accept or reject their output.
 
 ## Notes

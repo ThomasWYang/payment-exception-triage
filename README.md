@@ -14,13 +14,13 @@ A payment fails, duplicates or is disputed. An operations analyst opens a case. 
 
 | Role | In the demo | Can do | Cannot do |
 |---|---|---|---|
-| **Agent service** | `agent-key` (used by the Triage button) | Read payment/account/policy evidence; propose an action | Execute, write or approve |
-| **Analyst** | Analyst Alice (`analyst-key`) | View cases/audit trails; run the agent triage | Approve |
-| **Approver** | Approver Bob (`approver-key`) | Approve or reject pending actions | Triage |
-| **Separation-of-duties test** | Approver Alice (`approver-alice-key`) | Attempt approval; denied because she owns the seeded cases | Approve her own case |
-| **Auditor / compliance** | Uses analyst/approver access in this demo | Inspect the append-only audit trail | Change audit records |
+| **Agent service** | `agent-key` (AGENT) | Read payment/account/policy evidence; propose; service- or scheduler-initiated triage | Execute, approve or write |
+| **Alice** | `alice-key` (ANALYST + APPROVER) | View; request triage; approve other people's cases | Approve a case she created or requested triage for |
+| **Bob** | `bob-key` (ANALYST + APPROVER) | View; request triage; approve other people's cases | Approve a case he created or requested triage for |
+| **Carol** | `carol-key` (ANALYST) | View; request triage | Approve |
+| **Dave** | `dave-key` (APPROVER) | View; approve or reject pending actions | Triage |
 
-The demo keys are synthetic and local-only. Production would use the enterprise IdP/OAuth.
+Alice and Bob hold both roles so they can approve each other's cases; the service still blocks self-approval and the triage requester. Carol and Dave show the single-role boundaries. Each identity has one key; the UI selects the active role and the API records it. The demo keys are synthetic and local-only; production would use the enterprise IdP/OAuth.
 
 ## The rules the service enforces
 
@@ -32,7 +32,8 @@ The demo keys are synthetic and local-only. Production would use the enterprise 
 | **Refund cap** | Refunds are capped at **$10,000** and at the original settled amount. |
 | **Refund eligibility** | The payment must be settled and the account active. |
 | **Hold / escalate** | Non-financial. Hold auto-executes; escalate routes to a human and ends the automated flow. |
-| **Separation of duties** | The approver must not be the case assignee/creator. |
+| **Separation of duties** | The approver must not be the case assignee/creator or the analyst who requested triage. |
+| **Multiple roles** | One identity can hold analyst and approver roles; the request selects the active role, and the service records it. SoD is on the actor and case participation, not the role alone. |
 | **One proposal / approval / execution** | Unique constraints; duplicate approvals replay the stored result instead of executing twice. |
 | **Audit** | Append-only. UPDATE/DELETE/REPLACE are blocked at the database. |
 | **Degraded mode** | `DEGRADED_MODE=true` or `AUTO_APPROVE_ENABLED=false` forces approval for retries, refunds and holds. |
@@ -42,7 +43,7 @@ The UI reads the live auto-retry limit, refund cap and mode from `/status` — t
 
 ## Sample cases
 
-The seed creates eight open cases. The UI's **Sample cases** panel shows the same guide. Match the IDs to see the expected outcomes.
+The seed creates ten open cases. The UI's **Sample cases** panel shows the same guide. Match the IDs to see the expected outcomes.
 
 | Case | Scenario | Amount | Expected outcome |
 |---|---|---|---|
@@ -54,6 +55,8 @@ The seed creates eight open cases. The UI's **Sample cases** panel shows the sam
 | `CASE-1006` | Duplicate of `PAY-1000` | $1,500 | `REFUND_REQUEST` pending → approve → **EXECUTED** |
 | `CASE-1007` | Customer dispute | $2,500 | `REFUND_REQUEST` pending → approve → **EXECUTED** |
 | `CASE-1008` | Customer dispute over the refund cap | $20,000 | **ESCALATED** |
+| `CASE-1009` | Carol's case (analyst-only owner) | $5,000 | `RETRY` pending → approve → **EXECUTED** |
+| `CASE-1010` | Bob's case (dual-role owner) | $5,000 | `RETRY` pending → approve → **EXECUTED** |
 
 ## Quick start (UI)
 
@@ -85,20 +88,21 @@ No `.env` is required. `env.example` documents optional overrides.
 
 ### Two-minute walkthrough
 
-1. As **Analyst Alice**, click **Triage** on `CASE-1001`. The agent proposes a retry; it auto-executes. Click **Details** to see the rationale and evidence, then **Audit** for the trail.
-2. Triage `CASE-1002`. It waits for approval. Switch to **Approver Alice** and try to approve it: the service denies it with `SELF_APPROVAL_DENIED` — she owns the seeded case (separation of duties). Switch to **Approver Bob** and approve it; it executes.
-3. Switch back to **Analyst Alice** and triage `CASE-1006` (duplicate) and `CASE-1007` (dispute). Switch to **Approver Bob** and approve both; the refunds execute.
-4. Switch back to **Analyst Alice** and triage `CASE-1008` (over cap) and `CASE-1004` (closed account). Both escalate; nothing executes.
-5. The UI reuses one idempotency key per approval dialog, so a double-click or retry cannot double-execute. The server tests and `scripts/demo.py` also demonstrate the replay.
+1. As **Carol (analyst)**, triage `CASE-1001` (auto-executes) and `CASE-1009` (Carol's case; waits for approval). Click **Details** to see the rationale, evidence and `Triage requested by user:carol`.
+2. Switch to **Dave (approver)** and approve `CASE-1009`; it executes. Carol has no approval actions; Dave has no Triage button.
+3. Switch to **Bob (analyst)** and triage `CASE-1010` (Bob's case); switch to **Alice (approver)** and approve it. Alice and Bob can approve each other's cases.
+4. Switch to **Alice (analyst)** and triage `CASE-1002` (Alice's case); switch to **Alice (approver)** and try to approve: denied with `SELF_APPROVAL_DENIED` and `TRIAGE_REQUESTER_CANNOT_APPROVE`. Switch to **Bob (approver)** and approve it.
+5. Switch to **Carol (analyst)** and triage `CASE-1006` (duplicate) and `CASE-1007` (dispute); switch to Dave or Bob and approve both. Triage `CASE-1008` (over cap) and `CASE-1004` (closed account); both escalate.
+6. The UI reuses one idempotency key per approval dialog, so a double-click or retry cannot double-execute. The server tests and `scripts/demo.py` also demonstrate the replay.
 
 ## What the UI shows
 
-- **How to use** — three steps and the role/separation-of-duties hint.
-- **Roles** — who can view, triage (agent), approve or audit.
+- **How to use** — the user/active-role walkthrough and the separation-of-duties hint.
+- **Roles** — Alice/Bob (analyst + approver), Carol (analyst), Dave (approver) and the agent service.
 - **Rules** — the live auto-retry limit and refund cap from `/status`, plus the fixed controls.
 - **Sample cases** — the table above.
 - **Case table** — status, proposal action, policy outcome and reason codes.
-- **Details** — the proposal rationale, evidence references, approval and execution.
+- **Details** — the proposal rationale, evidence references, triage requester, approval and execution.
 - **Audit** — the append-only event trail.
 - **Status bar** — mode, case counts, auto-retry limit and refund cap.
 
@@ -136,31 +140,51 @@ The planner has no execute tool. The only write path is a proposal, and the serv
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | `POST` | `/v1/cases` | ANALYST | Create a case |
-| `POST` | `/v1/cases/{id}/triage` | AGENT | Run planner + policy |
+| `POST` | `/v1/cases/{id}/triage` | ANALYST / AGENT | Request triage; run planner + policy |
 | `GET` | `/v1/cases/{id}` | ANALYST / APPROVER | Case view |
 | `GET` | `/v1/cases?status=...` | ANALYST / APPROVER | List / approval queue |
 | `POST` | `/v1/cases/{id}/approve` | APPROVER | Approve/reject; `Idempotency-Key` required |
 | `GET` | `/v1/cases/{id}/audit` | ANALYST / APPROVER | Audit trail |
 | `GET` | `/healthz`, `/readyz`, `/status` | public (local) | Liveness, readiness, counters, policy caps |
 
-OpenAPI docs: `http://127.0.0.1:8000/docs`.
+One identity can hold multiple roles. Send `X-Acting-Role: ANALYST` or `X-Acting-Role: APPROVER` to select the active role; the service records it. If omitted, the service selects the first role the identity holds that the endpoint allows. OpenAPI docs: `http://127.0.0.1:8000/docs`.
 
 ### API example
 
 ```bash
-curl -s http://127.0.0.1:8000/v1/cases -H "X-API-Key: analyst-key"
+# Alice holds both roles; act as analyst for the case list.
+curl -s http://127.0.0.1:8000/v1/cases \
+  -H "X-API-Key: alice-key" -H "X-Acting-Role: ANALYST"
 
-curl -s -X POST http://127.0.0.1:8000/v1/cases/CASE-1002/triage \
-  -H "X-API-Key: agent-key"
+# Carol (analyst-only) requests triage on her own case.
+curl -s -X POST http://127.0.0.1:8000/v1/cases/CASE-1009/triage \
+  -H "X-API-Key: carol-key" -H "X-Acting-Role: ANALYST"
 
-curl -s -X POST http://127.0.0.1:8000/v1/cases/CASE-1002/approve \
-  -H "X-API-Key: approver-key" \
+# Dave (approver-only) approves it.
+curl -s -X POST http://127.0.0.1:8000/v1/cases/CASE-1009/approve \
+  -H "X-API-Key: dave-key" -H "X-Acting-Role: APPROVER" \
   -H "Idempotency-Key: demo-approval-1" \
   -H "Content-Type: application/json" \
   -d '{"decision":"APPROVE","rationale":"Reviewed the evidence"}'
 
+# Alice requests triage on her own case; her approver role is denied.
+curl -s -X POST http://127.0.0.1:8000/v1/cases/CASE-1002/triage \
+  -H "X-API-Key: alice-key" -H "X-Acting-Role: ANALYST"
+curl -s -X POST http://127.0.0.1:8000/v1/cases/CASE-1002/approve \
+  -H "X-API-Key: alice-key" -H "X-Acting-Role: APPROVER" \
+  -H "Idempotency-Key: demo-approval-2" \
+  -H "Content-Type: application/json" \
+  -d '{"decision":"APPROVE","rationale":"Mine"}'   # 403
+
+# Bob can approve Alice's case.
+curl -s -X POST http://127.0.0.1:8000/v1/cases/CASE-1002/approve \
+  -H "X-API-Key: bob-key" -H "X-Acting-Role: APPROVER" \
+  -H "Idempotency-Key: demo-approval-3" \
+  -H "Content-Type: application/json" \
+  -d '{"decision":"APPROVE","rationale":"Independent review"}'
+
 curl -s http://127.0.0.1:8000/v1/cases/CASE-1002/audit \
-  -H "X-API-Key: analyst-key"
+  -H "X-API-Key: alice-key" -H "X-Acting-Role: ANALYST"
 ```
 
 ### State machine
@@ -197,7 +221,7 @@ Runs the lifecycle without the UI.
 - SQLite is embedded for zero-setup local run; production would use a managed relational database.
 - API keys are synthetic; production would use the enterprise IdP/OAuth.
 - One approval level; no multi-level approval chains.
-- The slice's separation-of-duties check is the case assignee; production would also exclude the human triage requester and proposal editors (see "Production identity and AI expansion").
+- The slice's separation-of-duties check covers the case assignee and the human triage requester; production would also exclude proposal editors and beneficiaries (see "Production identity and AI expansion").
 - AUD only; no FX or partial refunds.
 - No Docker or cloud deployment; the production/CI-CD path is documented in `evidence/design.md`.
 - Idempotency keys are globally scoped per deployment; clients should use UUIDs.
@@ -208,7 +232,7 @@ Runs the lifecycle without the UI.
 
 ### Production identity and AI expansion
 
-The demo gives each key one role and uses two keys for the same actor (Alice) to demonstrate multi-role and separation of duties. Production would source a role set from the IdP, require an explicit active role, use a separate service identity for the agent/scheduler, and exclude every human who created, owns, requested triage for or edited the case from approving it — not just the assignee. The slice's check is `approver != assignee`; the production model is in `evidence/design.md` and ADR-6.
+The demo has four human identities: Alice and Bob each hold analyst + approver and can approve each other's cases; Carol is analyst-only; Dave is approver-only. Each identity has one key; the UI selects the active role. The slice records `triage_requested_by` and denies the assignee and the triage requester. Production would source the role set from the IdP, require an explicit active role, use a separate service identity for the agent/scheduler, and exclude every human who created, owns, requested triage for, proposed or edited the case from approving it — not just the assignee and requester. The production model is in `evidence/design.md` and ADR-6.
 
 The deterministic planner is a stand-in. An LLM can implement the same `Planner` protocol behind the read-only tool gateway, with structured output, evidence grounding, confidence/abstain, deterministic fallback and the same service-side policy, approval, separation of duties and audit. The phased path, guardrails and what stays deterministic are in `evidence/design.md` and ADR-7. The LLM would propose; it would never execute or approve.
 

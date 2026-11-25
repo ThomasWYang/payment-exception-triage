@@ -36,8 +36,10 @@ All configuration is environment-based. `env.example` documents the synthetic de
 | `PLANNER_MAX_TOOL_CALLS` | `8` | Tool-call budget (every attempt counts) |
 | `PLANNER_TIMEOUT_SECONDS` | `5` | Planner deadline |
 | `APP_VERSION` | `0.1.0` | Version shown by `/status` |
-| `API_KEY_*` | demo keys | Synthetic auth |
+| `API_KEY_*` | demo keys | Synthetic identities: Alice (`ANALYST` + `APPROVER`), Bob (`ANALYST` + `APPROVER`), Carol (`ANALYST`), Dave (`APPROVER`), agent (`AGENT`) |
 | `CORS_ORIGINS` | Vite + local API origins | UI origins |
+
+An identity may hold multiple roles. `X-Acting-Role` selects the active role; the service records it and rejects a role the identity does not hold (`FORBIDDEN`), a role the endpoint does not allow (`ACTIVE_ROLE_MISMATCH`) or an unknown value (`INVALID_ACTING_ROLE`). If the header is omitted, the service uses the first role the identity holds that the endpoint allows.
 
 ## Failure modes and runbook
 
@@ -50,7 +52,7 @@ All configuration is environment-based. `env.example` documents the synthetic de
 | Executor retry after DB failure | execution intent / audit | The executor must dedupe on the proposal ID; production adds an outbox |
 | Missing/invalid policy | startup error, `/readyz` | Fix `POLICY_PATH`; startup fails fast, and a mid-flight failure escalates |
 | 401 | `X-API-Key` | Use a configured key |
-| 403 | role / separation of duties | Use the right role; the approver must differ from the creator/assignee |
+| 403 | role / active role / separation of duties | Use the right role and `X-Acting-Role`; the approver must differ from the assignee and the triage requester. Codes: `FORBIDDEN`, `ACTIVE_ROLE_MISMATCH`, `APPROVAL_DENIED` (`SELF_APPROVAL_DENIED`, `TRIAGE_REQUESTER_CANNOT_APPROVE`) |
 | 409 | case state / idempotency key | Inspect the case and audit; use the same key to replay |
 | 411 | `Transfer-Encoding: chunked` or missing `Content-Length` | Send a bounded body with `Content-Length` |
 | 413 | `MAX_REQUEST_BYTES` | Reduce the payload |
