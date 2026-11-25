@@ -48,7 +48,7 @@ Claude Code (Anthropic) as the primary AI coding agent.
 - Documented the production multi-role/four-eye model and the LLM planner expansion (design-only) without adding a model runtime to the slice.
 - Implemented role sets and an explicit active role (`X-Acting-Role`), with one key per identity. The demo has four humans: Alice and Bob (analyst + approver), Carol (analyst-only) and Dave (approver-only), plus the agent service. The slice records `triage_requested_by` and denies the assignee or triage requester; Alice and Bob can approve each other's cases, Carol cannot approve and Dave cannot triage.
 - Added the only local scalability guards: a paginated audit response (default 500, max 1000) and an `audit_events(event_type)` index for `/status` counts. Documented the production path instead of adding external components: managed relational DB, outbox/queue for execution, separate planner service, Redis/gateway rate limits, aggregated metrics and audit export.
-- Documented the CAP choices: CP for case/approval/execution, AP for case lists/metrics/audit export; the approval path uses the primary and re-checks the state/idempotency key; the outbox/queue uses an idempotent executor; read replicas, multi-region failover and the partition failure matrix are in design.md/ADR-9. No distributed components were added to the slice.
+- Documented the CAP choices: CP for case/approval/execution, AP for case lists/metrics/audit export; the approval path uses the primary and re-checks the state/idempotency key; the outbox/queue uses an idempotent executor; read replicas, multi-region failover and the partition failure matrix are in design.md/ADR-3. No distributed components were added to the slice.
 
 ## Code review and hardening
 
@@ -69,18 +69,23 @@ Deliberate dispositions (documented, not changed):
 - Execution is at-least-once at the workflow boundary; the executor must dedupe on the proposal ID. Production would use an outbox for exactly-once semantics.
 - The UI has no browser automation; it is checked by a TypeScript/Vite build, a server-side smoke test and an asset-serving test, and the API endpoints it calls are covered by API tests.
 
+### Final review (2026-11-25)
+
+After the multi-role, scalability and CAP refactor, three read-only subagents reviewed the backend/UI code, the docs/requirements and the test gaps. The code review found six nits, all fixed: the Details outcome label, the approver active-role defense, the migration startup race, the audit actor role in the UI, the case-list pagination notice and the approval-modal error visibility. The final pass added the schema migration/index test (with old data), the default-active-role test, the non-approver active-role denial, REJECT SoD, denied-key reuse, active-role mismatch on triage/approve, denial side effects, concurrent different-key approvals, audit 404/boundaries, status modes/counters, the 500 envelope, an API/UI contract test, the seed idempotency test, the demo smoke test, the config key override, the policy active-role unit test and the executor truncation/non-draft planner paths; the ADRs were consolidated to five. The docs audit fixed the Planner return type, LOG_LEVEL, demo docstring, ESCALATED labels, key wording, AGENT role and audit/log wording. Final: 154 tests, the golden eval and the demo.
+
 ## How generated output is reviewed
 
 - Every phase ends with a diff review and a commit.
 - Tests are the oracle: a policy rule is not considered implemented until a failing test exists and passes.
 - The golden-case eval gates regressions with exact expected outcomes and zero forbidden executions.
-- Every code commit from the original build was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 121 after the UI/CORS and code-review hardening, 122 after the UI asset-serving test, 132 after multi-role identities, active roles and the triage-requester check, and 134 after audit pagination. All passed.
+- Every code commit from the original build was re-run in an isolated worktree; the test count grew 26 → 31 → 41 → 55 → 86 → 95 → 96, then 121 after the UI/CORS and code-review hardening, 122 after the UI asset-serving test, 132 after multi-role identities, active roles and the triage-requester check, 134 after audit pagination, and 154 after the final test/audit pass. All passed.
 - A mutation check breaks a rule in a temporary copy and confirms tests fail.
 - A fresh public clone was verified end-to-end: verify, demo, UI build and UI smoke (including the referenced assets).
 - GitHub Actions is green, including the code-review fix commit and the UI-primary commit (`45588435963`).
 - The UI/README restructure was verified by `npm run build`, `ruff` + `pytest`, a fresh clone and CI.
 - The multi-role/triage-requester implementation was verified by `ruff` + `pytest` (132 passed), the 30-case golden eval, the demo (including cross-approval, single-role approval and the triage-requester denial), the UI build and CI.
-- The scalability guards were verified by `ruff` + `pytest` (134 passed), the audit pagination API/repository tests, the UI build and CI; the production scaling path is documented in design/ADR-8/operate.
+- The scalability guards were verified by `ruff` + `pytest` (154 passed), the audit pagination API/repository tests, the UI build and CI; the production scaling path is documented in design/ADR-3/operate.
+- The final test/audit pass added the schema migration/index test, the default-active-role test, Bob's self-denial, audit defaults, triage-requester assertions on failure paths, the seed integration test, and the demo inside `scripts/verify.py`.
 - Subagents (when used) produce drafts only; I review, run and accept or reject their output.
 
 ## Notes

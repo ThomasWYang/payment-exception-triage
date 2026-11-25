@@ -51,5 +51,5 @@ An AI agent can gather evidence and propose an action, but it must not be truste
 - The core path makes no outbound network calls.
 - The UI is the primary demo surface; it explains the roles, rules and sample cases without the README, and the built assets run without Node.
 - One identity can hold multiple roles; the active role is explicit and recorded. The approver cannot be the case assignee or the triage requester; Alice and Bob can approve each other's cases, Carol cannot approve and Dave cannot triage.
-- The audit response is bounded and the scalability limits and production path are documented (`design.md`, ADR-8, `operate.md`).
-- The CAP choices and distributed failure behavior are documented: CP for case/approval/execution, AP for reads/observability (`design.md`, ADR-9).
+- The audit response is bounded and the scalability limits and production path are documented (`design.md`, ADR-3, `operate.md`).
+- The CAP choices and distributed failure behavior are documented: CP for case/approval/execution, AP for reads/observability (`design.md`, ADR-3).

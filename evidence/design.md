@@ -47,7 +47,7 @@ Append-only audit + JSON logs + /healthz /readyz /status
 4. The policy engine validates the proposal and returns an outcome.
 5. Auto-approved actions execute immediately. Financial/higher-risk actions wait for a different human approver.
 6. The mock executor writes an execution record; the case moves to a terminal state.
-7. Every step writes an audit event and a structured log line.
+7. Every step is audited; requests, tool calls and errors are logged.
 
 ## Component boundaries
 
@@ -110,7 +110,7 @@ The create-case request does not accept an assignee; the server sets it to the c
 - Refund amount > 0, ≤ original settled amount, ≤ the refund cap, and the account must be active.
 - Retry only for failed, retryable payments on active accounts; amount fixed to the original.
 - Refunds always require approval; retries above the auto-retry limit require approval.
-- The approver must hold the `APPROVER` role and must not be the case assignee or the triage requester.
+- The approver must hold the `APPROVER` role, act with the `APPROVER` active role, and must not be the case assignee or the triage requester.
 - A user may hold both analyst and approver roles; the active role is explicit and recorded. SoD is checked on the actor and case participation.
 - Duplicate approval/execution replays the prior result.
 - Degraded mode / `AUTO_APPROVE_ENABLED=false` forces approval for retries, refunds and holds.
@@ -221,7 +221,7 @@ PACELC: when there is no partition, the approval path pays latency for strong co
 
 ## LLM/AI expansion (design-only)
 
-The slice deliberately uses a deterministic planner: reproducible tests, offline demo, no keys or model provider. The seam for a real model is the `Planner` protocol (`planner.py`): `plan(case, gateway) -> Proposal`. An `LLMPlanner` can implement it without changing the tool gateway, policy, approval, executor or audit. The model would run out of process and get only the read-only tools.
+The slice deliberately uses a deterministic planner: reproducible tests, offline demo, no keys or model provider. The seam for a real model is the `Planner` protocol (`planner.py`): `plan(case, gateway) -> ProposalDraft`. An `LLMPlanner` can implement it without changing the tool gateway, policy, approval, executor or audit. The model would run out of process and get only the read-only tools.
 
 **Where an LLM adds value:** evidence summarization with citations, exception classification from free-text notes, policy retrieval/RAG, rationale drafting, case prioritization, customer-communication drafts, anomaly/fraud signals, and multi-step read-only investigation.
 
@@ -253,7 +253,7 @@ API Gateway/ALB → ECS Fargate or Lambda → Aurora PostgreSQL; SQS/Step Functi
 
 ## CI/CD promotion
 
-- **Local**: `python scripts/verify.py` (ruff + pytest + golden eval).
+- **Local**: `python scripts/verify.py` (ruff + pytest + golden eval + demo).
 - **PR**: the same checks on GitHub Actions plus the UI build job.
 - **Build**: container image, SBOM, image scan (future).
 - **Dev**: Terraform deploy + smoke tests.

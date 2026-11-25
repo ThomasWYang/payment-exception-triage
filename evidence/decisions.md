@@ -1,73 +1,41 @@
 # Decisions
 
-## ADR-1: Deterministic planner behind a protocol, no LLM runtime
+## ADR-1: Deterministic planner behind a protocol; the agent has no execute tool
 
-**Context:** The exercise allows a non-AI product; the AI-agent requirement is about the development process. A real model would add keys, latency and non-determinism.
+**Context:** The exercise allows a non-AI product; the AI-agent requirement is about the development process. Prompt-level restrictions are not a security boundary. A real model would add keys, latency and non-determinism.
 
-**Decision:** Implement a deterministic `Planner` protocol for the slice. The planner can only read evidence and propose.
+**Decision:** Implement a deterministic `Planner` protocol for the slice. The planner can only read evidence through the tool gateway and propose an action. Execution is a service-side workflow after policy and, where required, human approval.
 
-**Consequences:** Reproducible tests and demos; no keys. A real LLM/agent can replace the planner later without changing the tool gateway, policy, approval or audit.
+**Consequences:** Reproducible tests and demos; no keys. The agent cannot move money; the service enforces the boundary and the API/UI show the denials. The gateway keeps the repository private; an untrusted/LLM planner should run out of process. A real LLM can replace the planner without changing the tool gateway, policy, approval or audit.
 
-## ADR-2: The agent has no execute tool
+## ADR-2: Tiered approval, multi-role identities and four-eye
 
-**Context:** Prompt-level restrictions are not a security boundary.
+**Context:** Not every action needs a human, but financial actions do. Real staff can hold multiple roles; the slice models one key per identity with a role set and an explicit active role. Alice and Bob hold analyst + approver, Carol is analyst-only and Dave is approver-only. A user with both roles could otherwise create or triage a case and then approve it.
 
-**Decision:** Expose only read-only tools to the planner. Execution is a service-side workflow after policy and, where required, human approval.
+**Decision:** Low-risk retries auto-approve; refunds and higher-risk retries require an approver. Model roles as a set; require the active role to match the endpoint and record it. Use a separate service identity for the agent/scheduler with read-and-propose only. Record `triage_requested_by` and deny an approver who is the case assignee or the triage requester. No self-approval; if no independent approver is available, leave the case pending/escalated; a break-glass path needs a second approver or supervisor and a specific audit event. The slice covers the assignee and triage requester; production adds proposal editors and beneficiaries.
 
-**Consequences:** The agent cannot move money; the service enforces the boundary. The API and UI show the denials. The gateway keeps the repository private; the deterministic planner is trusted code, and an untrusted/LLM planner should run out of process.
+**Consequences:** Alice and Bob can approve each other's cases but not their own or a case they requested triage for; Carol cannot approve; Dave cannot triage. Holding both roles is not itself a violation; the boundary is actor identity and case participation. The audit records the active role and actor. One approval level only in this slice; execution is at-least-once and the executor dedupes on the proposal ID. Production needs participant history, access reviews, separate service accounts, an approval queue and an outbox for exactly-once semantics.
 
-## ADR-3: Tiered approval with separation of duties
+## ADR-3: SQLite, append-only audit, scalability and CAP
 
-**Context:** Not every action needs a human, but financial actions do.
+**Context:** Zero-setup local run is a hard constraint. Triage and approval are write-heavy; the executor is a mock; the planner is deterministic; the slice is single-node.
 
-**Decision:** Low-risk retries auto-approve; refunds and higher-risk retries require an approver who is not the case assignee or the triage requester.
+**Decision:** Use embedded SQLite with constraints, WAL, foreign keys and audit triggers. Add only the audit pagination cap (default 500, max 1000) and the `audit_events(event_type)` index. Do not add Redis, a queue or a managed DB to the slice. In production, use a managed relational DB and an outbox + queue for execution, with a separate planner service, Redis/gateway rate limits, aggregated metrics and immutable audit export. Keep case/approval/execution CP (fail closed under a partition) and case lists/metrics/audit export AP.
 
-**Consequences:** Faster low-risk handling; stronger control on money movement. One approval level only in this slice. Execution is at-least-once at the workflow boundary; the executor receives the proposal ID as a durable idempotency key and must dedupe. The mock is pure; production would use an outbox for exactly-once semantics.
+**Consequences:** No external service; real enforcement. `recursive_triggers` blocks INSERT OR REPLACE from bypassing the append-only audit. The slice is single-writer and synchronous; the executor/planner boundaries are explicit. The API/DB contracts (idempotency, unique constraints, proposal ID, audit) carry over. Production needs load tests, connection pooling, migrations, retention and queue operations; approvals may be unavailable during a partition/failover, but no double execution.
 
-## ADR-4: SQLite and append-only audit for the local slice
-
-**Context:** Zero-setup local run is a hard constraint.
-
-**Decision:** Use embedded SQLite with constraints, WAL, foreign keys and audit triggers.
-
-**Consequences:** No external service; real enforcement. `recursive_triggers` is enabled so INSERT OR REPLACE cannot bypass the append-only triggers. Production would use Aurora PostgreSQL and an immutable audit store; migrations would be managed separately.
-
-## ADR-5: React UI is the primary demo surface; what we intentionally did not build
+## ADR-4: React UI is the primary demo surface
 
 **Context:** The brief does not require a browser UI, but the workflow — roles, policy gates, separation of duties, approval and audit — is much easier to test and understand through one. After the first review, the candidate asked to make the UI primary rather than optional and to make it self-explanatory without the README.
 
-**Decision:** Make the React/Vite client in `ui/` the primary demo surface. Commit the built `dist/` so `uvicorn` serves `/ui/` with no Node install; Node 22+ is only needed to rebuild. The UI includes an on-screen guide for the three-step flow, roles, rules, sample cases and expected outcomes, plus case details/evidence/approval/audit. It reads the live auto-retry limit, refund cap and mode from `/status`. Do not build real payment rails, a real LLM, IdP/OAuth, multi-level approvals, multi-currency, Docker or cloud deployment.
+**Decision:** Make the React/Vite client in `ui/` the primary demo surface. Commit the built `dist/` so `uvicorn` serves `/ui/` with no Node install; Node 22+ is only needed to rebuild. The UI includes a user/active-role selector (Alice/Bob dual-role, Carol analyst, Dave approver), a guide for the flow, roles, rules and sample cases, plus case details/evidence/triage requester/approval/audit. It reads the live auto-retry limit, refund cap and mode from `/status`. It is a demo client; the API remains the security boundary and production would use SSO + a BFF.
 
-**Consequences:** The demo is understandable and testable without reading the full README; the API remains the core and the security boundary. The UI uses synthetic demo keys, is not a security boundary, and has no browser automation. Node is only a rebuild-time prerequisite. Each omission is documented with its production path.
+**Consequences:** The demo is understandable and testable without reading the full README; the API remains the core and the security boundary. The UI uses synthetic demo keys, is not a security boundary, and has no browser automation. Node is only a rebuild-time prerequisite.
 
-## ADR-6: Multi-role identities and four-eye approval
-
-**Context:** Real staff can hold multiple roles; the slice models one key per identity with a role set and an explicit active role. Alice and Bob hold analyst + approver, Carol is analyst-only and Dave is approver-only. A user with both roles could otherwise create or triage a case and then approve it.
-
-**Decision:** Model roles as a set; require the active role to match the endpoint and record it. Use a separate service identity for the agent/scheduler with read-and-propose only. Record `triage_requested_by` and deny an approver who is the assignee or the triage requester. No self-approval; if no independent approver is available, leave the case pending/escalated; a break-glass path needs a second approver or supervisor and a specific audit event. The slice covers the assignee and triage requester; production adds proposal editors and beneficiaries.
-
-**Consequences:** Alice and Bob can approve each other's cases but not their own or a case they requested triage for; Carol cannot approve; Dave cannot triage. Holding both roles is not itself a violation; the boundary is actor identity and case participation. The audit records the active role and actor. Production needs the full participant history, access reviews, separate service accounts and an approval queue for small teams.
-
-## ADR-7: LLM planner behind the same guardrails
+## ADR-5: LLM expansion and what we intentionally did not build
 
 **Context:** The slice uses a deterministic planner for reproducibility, offline operation and no keys. An LLM could improve evidence synthesis, exception classification and policy retrieval, but it must not gain execute or approval authority.
 
-**Decision:** Keep the `Planner` protocol as the seam. An LLM planner runs out of process, uses the read-only tool gateway, returns a schema-validated proposal with evidence refs, and is wrapped by confidence/abstain and deterministic fallback. The policy engine, approval, separation of duties, idempotency, executor and audit remain service-side and model-agnostic. Roll out shadow → LLM-assisted with human approval → multi-step read-only agent, gated by evals, canary and a kill switch.
+**Decision:** Keep the `Planner` protocol as the seam. An LLM planner runs out of process, uses the read-only tool gateway, returns a schema-validated proposal with evidence refs, and is wrapped by confidence/abstain and deterministic fallback. The policy engine, approval, separation of duties, idempotency, executor and audit remain service-side and model-agnostic. Roll out shadow → LLM-assisted with human approval → multi-step read-only agent, gated by evals, canary and a kill switch. Do not build real payment rails, a real LLM runtime, IdP/OAuth, multi-level approvals, multi-currency, Docker, cloud deployment, a managed DB, Redis or a queue.
 
-**Consequences:** The slice stays deterministic and key-free; the controls do not change when the model changes. LLM-specific work: prompt-injection defenses, PII redaction, evidence grounding, model/prompt versioning, cost/latency budgets, adversarial/grounding evals, vendor/DPIA. The LLM never executes, approves or becomes the audit source.
-
-## ADR-8: Scalability — local SQLite/synchronous slice, managed DB + outbox/queue in production
-
-**Context:** The slice must run locally with zero setup and fit a 3-hour build. Triage and approval are write-heavy; the executor is a mock; the planner is deterministic.
-
-**Decision:** Keep SQLite and synchronous execution for the slice. Add only the audit pagination cap (default 500, max 1000) and the `audit_events(event_type)` index. Do not add Redis, a queue or a managed DB to the slice. Document the production path: managed relational DB, outbox + queue for execution, separate planner service, Redis/gateway rate limiting/cache, aggregated metrics and immutable audit export.
-
-**Consequences:** The slice is single-writer and not horizontally scalable for writes; the executor and planner boundaries are explicit. The API/DB contracts (idempotency, unique constraints, proposal ID, audit) carry over. Production needs load tests, connection pooling, migrations, retention and queue operations.
-
-## ADR-9: CAP — CP for case/approval/execution, AP for reads and observability
-
-**Context:** Payment exceptions are financial decisions. A partition must not allow double approval/execution or an approval based on a stale case. The slice is single-node SQLite with no partition tolerance.
-
-**Decision:** In a distributed deployment, keep the case/approval/execution state CP: a quorum/primary DB, strong reads for the approval path, unique constraints/idempotency/compare-and-set, and fail closed when the primary is unavailable. Keep case lists, dashboards, metrics and audit export AP/eventually consistent via replicas/caches; the approval write re-checks the authoritative state, so stale reads cannot double-execute. Use an outbox/queue with an idempotent executor for the payment rail; the planner is advisory and falls back/escalates.
-
-**Consequences:** Approvals may be unavailable during a partition/failover; no double execution. Reads may be stale; the UI shows the source/version and the approval screen uses the primary. The queue/outbox and managed DB are production components; the slice documents them.
+**Consequences:** The slice stays deterministic and key-free; the controls do not change when the model changes. LLM-specific work: prompt-injection defenses, PII redaction, evidence grounding, model/prompt versioning, cost/latency budgets, adversarial/grounding evals, vendor/DPIA. The LLM never executes, approves or becomes the audit source. Each omission has a production path in `design.md`; the scalability/CAP sections cover the external components.

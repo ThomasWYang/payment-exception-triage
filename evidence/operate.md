@@ -36,6 +36,7 @@ All configuration is environment-based. `env.example` documents the synthetic de
 | `PLANNER_MAX_TOOL_CALLS` | `8` | Tool-call budget (every attempt counts) |
 | `PLANNER_TIMEOUT_SECONDS` | `5` | Planner deadline |
 | `APP_VERSION` | `0.1.0` | Version shown by `/status` |
+| `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` |
 | `API_KEY_*` | demo keys | Synthetic identities: Alice (`ANALYST` + `APPROVER`), Bob (`ANALYST` + `APPROVER`), Carol (`ANALYST`), Dave (`APPROVER`), agent (`AGENT`) |
 | `CORS_ORIGINS` | Vite + local API origins | UI origins |
 

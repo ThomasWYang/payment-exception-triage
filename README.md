@@ -147,7 +147,7 @@ The planner has no execute tool. The only write path is a proposal, and the serv
 | `GET` | `/v1/cases/{id}/audit` | ANALYST / APPROVER | Audit trail; paginated (`limit` default 500, max 1000; `offset`) |
 | `GET` | `/healthz`, `/readyz`, `/status` | public (local) | Liveness, readiness, counters, policy caps |
 
-One identity can hold multiple roles. Send `X-Acting-Role: ANALYST` or `X-Acting-Role: APPROVER` to select the active role; the service records it. If omitted, the service selects the first role the identity holds that the endpoint allows. OpenAPI docs: `http://127.0.0.1:8000/docs`.
+One identity can hold multiple roles. Send `X-Acting-Role: ANALYST`, `APPROVER` or `AGENT` (the agent service uses `AGENT`) to select the active role; the service records it. If omitted, the service selects the first role the identity holds that the endpoint allows. OpenAPI docs: `http://127.0.0.1:8000/docs`.
 
 ### API example
 
@@ -206,7 +206,7 @@ curl -s http://127.0.0.1:8000/v1/cases/CASE-1002/audit \
 python scripts/verify.py
 ```
 
-Runs `ruff`, `pytest` and the 30-case golden eval. The same command runs in GitHub Actions, together with a UI build job. The golden eval is a regression/acceptance gate, not a model-quality benchmark.
+Runs `ruff`, `pytest`, the 30-case golden eval and the end-to-end demo. The same command runs in GitHub Actions, together with a UI build job. The golden eval is a regression/acceptance gate, not a model-quality benchmark.
 
 ```bash
 python scripts/demo.py
@@ -216,7 +216,7 @@ Runs the lifecycle without the UI.
 
 ### Known limitations
 
-- The planner is deterministic, not an LLM. The exercise allows non-AI products; the AI-agent requirement is the development process. A real LLM can implement the same `Planner` protocol without changing the controls. The expansion path is in `evidence/design.md` and ADR-7.
+- The planner is deterministic, not an LLM. The exercise allows non-AI products; the AI-agent requirement is the development process. A real LLM can implement the same `Planner` protocol without changing the controls. The expansion path is in `evidence/design.md` and ADR-5.
 - The executor is a mock; no real payment rails or money movement. Execution is at-least-once at the workflow boundary; the executor receives the proposal ID as a durable idempotency key and must dedupe. Production would use an outbox for exactly-once semantics.
 - SQLite is embedded for zero-setup local run; it is single-writer and the executor/planner run in-process. Production uses a managed relational database, an outbox/queue for execution and a separate planner service (see "Scalability").
 - API keys are synthetic; production would use the enterprise IdP/OAuth.
@@ -232,15 +232,15 @@ Runs the lifecycle without the UI.
 
 ### Production identity and AI expansion
 
-The demo has four human identities: Alice and Bob each hold analyst + approver and can approve each other's cases; Carol is analyst-only; Dave is approver-only. Each identity has one key; the UI selects the active role. The slice records `triage_requested_by` and denies the assignee and the triage requester. Production would source the role set from the IdP, require an explicit active role, use a separate service identity for the agent/scheduler, and exclude every human who created, owns, requested triage for, proposed or edited the case from approving it — not just the assignee and requester. The production model is in `evidence/design.md` and ADR-6.
+The demo has four human identities: Alice and Bob each hold analyst + approver and can approve each other's cases; Carol is analyst-only; Dave is approver-only. Each identity has one key; the UI selects the active role. The slice records `triage_requested_by` and denies the assignee and the triage requester. Production would source the role set from the IdP, require an explicit active role, use a separate service identity for the agent/scheduler, and exclude every human who created, owns, requested triage for, proposed or edited the case from approving it — not just the assignee and requester. The production model is in `evidence/design.md` and ADR-2.
 
-The deterministic planner is a stand-in. An LLM can implement the same `Planner` protocol behind the read-only tool gateway, with structured output, evidence grounding, confidence/abstain, deterministic fallback and the same service-side policy, approval, separation of duties and audit. The phased path, guardrails and what stays deterministic are in `evidence/design.md` and ADR-7. The LLM would propose; it would never execute or approve.
+The deterministic planner is a stand-in. An LLM can implement the same `Planner` protocol behind the read-only tool gateway, with structured output, evidence grounding, confidence/abstain, deterministic fallback and the same service-side policy, approval, separation of duties and audit. The phased path, guardrails and what stays deterministic are in `evidence/design.md` and ADR-5. The LLM would propose; it would never execute or approve.
 
 ### Scalability
 
-The local slice is a single-node SQLite app with synchronous execution; it is built for a demo, not throughput. The API is stateless per request and the constraints/idempotency are real, but SQLite has one writer and the executor/planner run in-process. The audit list is paginated (default 500, max 1000) and `audit_events(event_type)` is indexed; the rest of the production path is documented in `evidence/design.md` and ADR-8: managed relational DB, outbox + queue for execution, separate planner service, Redis/gateway rate limiting, aggregated metrics and immutable audit export. The queue/outbox and managed DB are intentionally out of the slice. A k6/Locust load test with concurrent triage/approval writers is the next step.
+The local slice is a single-node SQLite app with synchronous execution; it is built for a demo, not throughput. The API is stateless per request and the constraints/idempotency are real, but SQLite has one writer and the executor/planner run in-process. The audit list is paginated (default 500, max 1000) and `audit_events(event_type)` is indexed; the rest of the production path is documented in `evidence/design.md` and ADR-3: managed relational DB, outbox + queue for execution, separate planner service, Redis/gateway rate limiting, aggregated metrics and immutable audit export. The queue/outbox and managed DB are intentionally out of the slice. A k6/Locust load test with concurrent triage/approval writers is the next step.
 
-CAP: the decision/execution path is **CP** — under a partition or DB outage the API fails closed rather than accept a possibly-duplicate approval. Case lists, dashboards and audit export are **AP/eventually consistent**; the approval write re-checks the authoritative state and idempotency key, so a stale read cannot double-execute. Production uses a quorum DB, an outbox/queue with an idempotent executor and a separate planner service. See `evidence/design.md` and ADR-9.
+CAP: the decision/execution path is **CP** — under a partition or DB outage the API fails closed rather than accept a possibly-duplicate approval. Case lists, dashboards and audit export are **AP/eventually consistent**; the approval write re-checks the authoritative state and idempotency key, so a stale read cannot double-execute. Production uses a quorum DB, an outbox/queue with an idempotent executor and a separate planner service. See `evidence/design.md` and ADR-3.
 
 ### Evidence pack
 
